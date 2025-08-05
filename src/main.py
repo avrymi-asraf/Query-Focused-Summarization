@@ -96,7 +96,19 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         
         if output_format == "print":
             print("Generated Summary (this iter):")
-            print(current_summary)
+            # Format the summary for better readability
+            formatted_summary = current_summary.replace("1. SUMMARY:", "\n1. SUMMARY:").replace("2. KEY HIGHLIGHTS:", "\n\n2. KEY HIGHLIGHTS:")
+            # Add line breaks after bullet points and periods in highlights
+            formatted_summary = formatted_summary.replace("* ", "\n* ").replace("• ", "\n• ")
+            
+            # Break up long paragraphs by adding line breaks after sentences
+            import re
+            # Add line breaks after sentences (period followed by space and capital letter)
+            formatted_summary = re.sub(r'(\. )([A-Z])', r'\1\n\2', formatted_summary)
+            # Also break after sentences ending with period at end of line
+            formatted_summary = re.sub(r'(\.)( +)([A-Z])', r'\1\n\3', formatted_summary)
+            
+            print(formatted_summary)
 
         # 3. QA
         qa_pairs = qa_agent.run(questions=questions, summary=current_summary)
@@ -179,5 +191,17 @@ if __name__ == '__main__':
     else:
         final_summary, num_iters = result
         print("\nFinal Summary after workflow:")
-        print(final_summary)
-        print(f"Workflow completed in {num_iters} iterations.")
+        # Format the final summary for better readability
+        formatted_final_summary = final_summary.replace("1. SUMMARY:", "\n1. SUMMARY:").replace("2. KEY HIGHLIGHTS:", "\n\n2. KEY HIGHLIGHTS:")
+        # Add line breaks after bullet points and periods in highlights
+        formatted_final_summary = formatted_final_summary.replace("* ", "\n* ").replace("• ", "\n• ")
+        
+        # Break up long paragraphs by adding line breaks after sentences
+        import re
+        # Add line breaks after sentences (period followed by space and capital letter)
+        formatted_final_summary = re.sub(r'(\. )([A-Z])', r'\1\n\2', formatted_final_summary)
+        # Also break after sentences ending with period at end of line
+        formatted_final_summary = re.sub(r'(\.)( +)([A-Z])', r'\1\n\3', formatted_final_summary)
+        
+        print(formatted_final_summary)
+        print(f"\nWorkflow completed in {num_iters} iterations.")
