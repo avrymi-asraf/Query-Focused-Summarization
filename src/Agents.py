@@ -67,12 +67,15 @@ class Summarizer:
         self.llm = llm or _llm_summarizer
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "Summarize the following article and highlight key sections. "
-             "If no sections are provided, start fresh.\n\n"
+             "Summarize the following article in a concise, informative manner.\n\n"
              "Article:\n{article}\n\n"
-             "Sections to consider (if any, otherwise ignore):\n{sections}\n\n"
-             "Provide only the summary and highlighted sections, no other text.\n"
-             "The summary should be up to 300 words long.\n"
+             "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
+             "Format your response as follows:\n"
+             "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
+             "2. KEY HIGHLIGHTS: 3-5 concise statements (50-100 words total) highlighting the most important facts, data points, or claims, ensuring ALL critical information is covered\n\n"
+             "Focus on accuracy and factual information from article only.\n"
+             "For lengthy articles, prioritize the most significant content, and key points.\n"
+             "Provide ONLY the formatted summary and highlights without additional commentary.\n"
             )
         ])
         # sections will be passed as a newline-separated string or empty
@@ -117,12 +120,17 @@ class Judge:
         self.llm = llm or _llm
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
+             "# Evaluation Task\n\n"
              "Article:\n{article}\n\n"
              "Summary:\n{summary}\n\n"
              "QA pairs (from summary):\n{qa_pairs}\n\n"
-             "Based on the full article, list any missing important topics or key facts that are NOT covered in the summary. "
-             "If the summary is comprehensive and covers all important aspects, respond with ONLY ‘OK’. "
-             "Otherwise, list each missing topic/fact on a new line, prefixed with a hyphen."
+             "## Instructions\n"
+             "You are a critical judge evaluating the quality and completeness of the summary and answers. Analyze:\n"
+             "1. Are all key facts, concepts, and major arguments from the article covered in the summary?\n"
+             "2. Are the QA answers accurate according to the original article (not just the summary)?\n"
+             "3. Are there any important numerical data, dates, names, or specific details missing?\n\n"
+             "If BOTH the summary is comprehensive AND the QA pairs accurately reflect the article, respond with EXACTLY 'OK'.\n"
+             "Otherwise, list each missing or incorrectly addressed topic on a new line with a hyphen, focusing on substance rather than style."
             )
         ])
         self.chain = (
