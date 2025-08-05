@@ -11,6 +11,7 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 # Use the model with highest RPM/RPD for free tier
 load_dotenv()
 
+
 rate_limiter = InMemoryRateLimiter(
     requests_per_second=0.233,
     check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
