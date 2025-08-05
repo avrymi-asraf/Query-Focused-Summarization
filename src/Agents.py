@@ -50,12 +50,19 @@ class QuestionGenerator:
         self.llm = llm or _llm # Use the global _llm if not provided
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "Given the query:\n"
+             "Given the user query:\n"
              "{query}\n"
              "and the article:\n"
              "{article}\n"
-             "Generate diagnostic questions, one per line. Do not include any introductory or concluding remarks."
-            )
+             "Generate exactly 10 diagnostic questions that help assess understanding of the article in relation to the query.\n\n"
+             "Guidelines for questions:\n"
+             "- Include a mix of factual, analytical, and inferential questions\n"
+             "- Ensure questions cover different aspects/sections of the article\n"
+             "- Make questions specific and directly answerable from the article content\n"
+             "- Vary complexity from straightforward recall to deeper analysis\n"
+             "- All questions must be relevant to both the article content and user query\n\n"
+             "Format: Output ONLY the 10 questions, one per line, without numbering or any additional text."
+             )
         ])
         self.chain = self.prompt | self.llm | StrOutputParser() | QuestionListParser()
 
@@ -77,7 +84,6 @@ class Summarizer:
              "For lengthy articles, prioritize the most significant content, and key points.\n"
              "Provide ONLY the formatted summary and highlights without additional commentary.\n"
             )
-
         ])
         # sections will be passed as a newline-separated string or empty
         self.chain = self.prompt | self.llm | StrOutputParser()
