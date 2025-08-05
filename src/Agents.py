@@ -8,7 +8,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # Define the LLM instance to be reused
 # Use the model with highest RPM/RPD for free tier
 load_dotenv()
-_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite-preview-06-17")
+_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=1000)
 
 # Helper function to extract text/content from various response types
 def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
@@ -63,7 +64,7 @@ class QuestionGenerator:
 
 class Summarizer:
     def __init__(self, llm=None):
-        self.llm = llm or _llm
+        self.llm = llm or _llm_summarizer
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
              "Summarize the following article and highlight key sections. "

@@ -58,7 +58,7 @@ def load_file_content(file_path: str) -> str:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-def run_summarization_workflow(query: str, article: str, max_iterations: int = 5, output_format: str = "print"):
+def run_summarization_workflow(query: str, article: str, max_iterations: int = 4, output_format: str = "print"):
     question_gen = QuestionGenerator()
     summarizer = Summarizer()
     qa_agent = QAAgent()
