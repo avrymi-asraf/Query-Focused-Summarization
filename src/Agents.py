@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # Use the model with highest RPM/RPD for free tier
 load_dotenv()
 _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
-_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=1000)
+_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400)
 
 # Helper function to extract text/content from various response types
 def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
@@ -71,7 +71,8 @@ class Summarizer:
              "If no sections are provided, start fresh.\n\n"
              "Article:\n{article}\n\n"
              "Sections to consider (if any, otherwise ignore):\n{sections}\n\n"
-             "Provide only the summary and highlighted sections, no other text."
+             "Provide only the summary and highlighted sections, no other text.\n"
+             "The summary should be up to 300 words long.\n"
             )
         ])
         # sections will be passed as a newline-separated string or empty
@@ -86,11 +87,14 @@ class QAAgent:
         self.llm = llm or _llm
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "Based only on this summary:\n"
+             "Based STRICTLY on this summary (do not use outside knowledge):\n"
              "{summary}\n\n"
-             "Answer each question below. If the summary does not contain enough information "
-             "to answer a question, state 'Not enough information in summary'.\n"
-             "Format your response as 'Question: Answer' pairs, one pair per line.\n\n"
+             "Answer each question below. Follow these rules:\n"
+             "- If the summary contains a direct answer, provide it concisely\n"
+             "- If the summary has partial information, provide what's available\n"
+             "- If the summary has no relevant information, respond EXACTLY with 'Not enough information in summary'\n"
+             "- Do not speculate or infer beyond what's explicitly stated\n\n"
+             "Format each response as 'Question: Answer' pairs (one pair per line, with the colon separator).\n\n"
              "Questions:\n{questions}"
             )
         ])
