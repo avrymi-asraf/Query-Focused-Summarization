@@ -77,6 +77,7 @@ class Summarizer:
              "For lengthy articles, prioritize the most significant content, and key points.\n"
              "Provide ONLY the formatted summary and highlights without additional commentary.\n"
             )
+
         ])
         # sections will be passed as a newline-separated string or empty
         self.chain = self.prompt | self.llm | StrOutputParser()
