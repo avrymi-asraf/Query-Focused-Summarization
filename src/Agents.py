@@ -5,11 +5,20 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.rate_limiters import InMemoryRateLimiter
+
 # Define the LLM instance to be reused
 # Use the model with highest RPM/RPD for free tier
 load_dotenv()
-_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
-_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400)
+
+rate_limiter = InMemoryRateLimiter(
+    requests_per_second=0.233,
+    check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
+    max_bucket_size=14,  # Controls the maximum burst size.
+)
+
+_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=rate_limiter)
+_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400, rate_limiter=rate_limiter)
 
 # Helper function to extract text/content from various response types
 def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
