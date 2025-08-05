@@ -2,6 +2,61 @@ from Agents import QuestionGenerator, Summarizer, QAAgent, Judge
 import argparse
 import os
 import json
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredPDFLoader
+
+def process_pdf_to_markdown(file_path: str) -> str:
+    """
+    Convert PDF file to markdown using LangChain loaders.
+    Uses PyPDFLoader as primary, with UnstructuredPDFLoader as fallback.
+    """
+    try:
+        # Primary loader: PyPDFLoader
+        loader = PyPDFLoader(file_path)
+        documents = loader.load()
+        
+        # Convert documents to markdown format
+        markdown_content = ""
+        for i, doc in enumerate(documents):
+            page_num = i + 1
+            content = doc.page_content.strip()
+            if content:
+                markdown_content += f"# Page {page_num}\n\n{content}\n\n"
+        
+        return markdown_content.strip()
+        
+    except Exception as e:
+        print(f"PyPDFLoader failed: {e}. Trying UnstructuredPDFLoader...")
+        
+        try:
+            # Fallback loader: UnstructuredPDFLoader
+            loader = UnstructuredPDFLoader(file_path)
+            documents = loader.load()
+            
+            # Convert documents to markdown format
+            markdown_content = ""
+            for i, doc in enumerate(documents):
+                content = doc.page_content.strip()
+                if content:
+                    # For unstructured loader, add section headers
+                    markdown_content += f"# Section {i + 1}\n\n{content}\n\n"
+            markdown_content = markdown_content.strip()
+            print(markdown_content)
+            return markdown_content
+            
+        except Exception as fallback_error:
+            raise Exception(f"Both PDF loaders failed. PyPDFLoader: {e}, UnstructuredPDFLoader: {fallback_error}")
+
+def load_file_content(file_path: str) -> str:
+    """
+    Load file content. If PDF, convert to markdown first.
+    """
+    if file_path.lower().endswith('.pdf'):
+        print(f"Processing PDF file: {file_path}")
+        return process_pdf_to_markdown(file_path)
+    else:
+        # Read text files directly
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
 
 def run_summarization_workflow(query: str, article: str, max_iterations: int = 5, output_format: str = "print"):
     question_gen = QuestionGenerator()
@@ -92,7 +147,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 5
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Query-Focused Summarization Workflow")
-    parser.add_argument('--file', type=str, required=True, help='Path to the article file')
+    parser.add_argument('--file', type=str, required=True, help='Path to the article file (PDF or text)')
     parser.add_argument('--query', type=str, required=True, help='Query for summarization')
     parser.add_argument('--max_iterations', type=int, default=5, help='Maximum number of iterations')
     parser.add_argument('--output_format', type=str, choices=['print', 'json'], default='print', 
@@ -105,9 +160,12 @@ if __name__ == '__main__':
         print(f"Error: File '{args.file}' does not exist.")
         exit(1)
 
-    # Read article content from file
-    with open(args.file, 'r', encoding='utf-8') as f:
-        article_content = f.read()
+    # Load article content from file (with PDF processing if needed)
+    try:
+        article_content = load_file_content(args.file)
+    except Exception as e:
+        print(f"Error loading file: {e}")
+        exit(1)
 
     result = run_summarization_workflow(
         query=args.query,
