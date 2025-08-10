@@ -59,18 +59,19 @@ class QuestionGenerator:
         self.llm = llm or _llm # Use the global _llm if not provided
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
+             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
              "Given the user query:\n"
              "{query}\n"
              "and the article:\n"
              "{article}\n"
-             "Generate exactly 10 diagnostic questions that help assess understanding of the article in relation to the query.\n\n"
+             "Generate exactly 5 diagnostic questions that help assess understanding of the article in relation to the query.\n\n"
              "Guidelines for questions:\n"
              "- Include a mix of factual, analytical, and inferential questions\n"
              "- Ensure questions cover different aspects/sections of the article\n"
              "- Make questions specific and directly answerable from the article content\n"
              "- Vary complexity from straightforward recall to deeper analysis\n"
              "- All questions must be relevant to both the article content and user query\n\n"
-             "Format: Output ONLY the 10 questions, one per line, without numbering or any additional text."
+             "Format: Output ONLY the 5 questions, one per line, without numbering or any additional text."
              )
         ])
         self.chain = self.prompt | self.llm | StrOutputParser() | QuestionListParser()
@@ -83,8 +84,9 @@ class Summarizer:
         self.llm = llm or _llm_summarizer
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "Summarize the following article in a concise, informative manner.\n\n"
-             "Article:\n{article}\n\n"
+             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
+             "Given the article:\n"
+             "{article}\n"
              "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
              "Format your response as follows:\n"
              "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
@@ -106,6 +108,8 @@ class QAAgent:
         self.llm = llm or _llm
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
+             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
+             "# Evaluation Task\n\n"
              "Based STRICTLY on this summary (do not use outside knowledge):\n"
              "{summary}\n\n"
              "Answer each question below. Follow these rules:\n"
@@ -136,18 +140,20 @@ class Judge:
         self.llm = llm or _llm
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
+             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
              "# Evaluation Task\n\n"
              "Article:\n{article}\n\n"
              "Summary:\n{summary}\n\n"
              "QA pairs (from summary):\n{qa_pairs}\n\n"
              "## Instructions\n"
-             "You are a critical judge evaluating the quality and completeness of the summary and answers. Analyze:\n"
-             "1. Are all key facts, concepts, and major arguments from the article covered in the summary?\n"
-             "2. Are the QA answers accurate according to the original article (not just the summary)?\n"
-             "3. Are there any important numerical data, dates, names, or specific details missing?\n\n"
-             "If BOTH the summary is comprehensive AND the QA pairs accurately reflect the article, respond with EXACTLY 'OK'.\n"
+             "Evaluate on these specific criteria:\n"
+             "1. FACTUAL ACCURACY: Are all facts from the article correctly represented?\n"
+             "2. COMPLETENESS: Are any major topics, arguments, or key points missing?\n"
+             "3. SPECIFICITY: Are important numerical data, dates, names, or specific details included?\n"
+             "4. QA ACCURACY: Do the answers match what's in the original article?\n\n"
+             "If ALL criteria are satisfied, respond with EXACTLY 'OK'.\n"
              "Otherwise, list each missing or incorrectly addressed topic on a new line with a hyphen, focusing on substance rather than style."
-            )
+             )
         ])
         self.chain = (
             {"qa_pairs": RunnableLambda(lambda x: "\n".join(f"{q}: {a}" for q, a in x["qa_pairs"])),

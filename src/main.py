@@ -91,7 +91,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             print(f"\n--- Iteration {iteration + 1} ---")
 
         # 2. Summarizer
-        current_summary = summarizer.run(article=article, sections=sections_to_highlight)
+        current_summary = summarizer.run(article=article, sections=sections_to_highlight) #todo: maybe also send quary here?
         iteration_data["summary"] = current_summary
         
         if output_format == "print":
