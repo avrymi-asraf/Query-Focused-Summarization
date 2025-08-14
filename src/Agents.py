@@ -8,15 +8,16 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.rate_limiters import InMemoryRateLimiter
 
 # Define the LLM instance to be reused
-# Use the model with highest RPM/RPD for free tier
 load_dotenv()
 
 rate_limiter = InMemoryRateLimiter(
     requests_per_second=0.233,
     check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
-    max_bucket_size=14,  # Controls the maximum burst size.
+    max_bucket_size=14,  # maximum burst size.
 )
 
+
+# Use the model with highest RPM/RPD for free tier
 _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=rate_limiter)
 _llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400, rate_limiter=rate_limiter)
 
@@ -82,26 +83,46 @@ class QuestionGenerator:
 class Summarizer:
     def __init__(self, llm=None):
         self.llm = llm or _llm_summarizer
+
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
+             "You are an expert summarizer tasked with creating a summary of an article from a specific user's perspective.\n\n"
+             "User's Query/Perspective:\n"  # Add the query here
+             "{query}\n\n"
              "Given the article:\n"
-             "{article}\n"
-             "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
+             "{article}\n\n"
+             "In this iteration, specifically focus on these topics (if provided):\n{sections}\n\n"
              "Format your response as follows:\n"
-             "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
-             "2. KEY HIGHLIGHTS: 3-5 concise statements (50-100 words total) highlighting the most important facts, data points, or claims, ensuring ALL critical information is covered\n\n"
-             "Focus on accuracy and factual information from article only.\n"
-             "For lengthy articles, prioritize the most significant content, and key points.\n"
+             "1. SUMMARY: A cohesive 200-250 word overview that directly addresses the user's query, pulling all relevant information from the article.\n"
+             "2. KEY HIGHLIGHTS: 3-5 concise statements highlighting the most important facts, data points, or claims relevant to the query.\n\n"
+             "Focus ONLY on information that is relevant to the user's query.\n"
              "Provide ONLY the formatted summary and highlights without additional commentary.\n"
-            )
+             )
         ])
+
+        # self.prompt = ChatPromptTemplate.from_messages([
+        #     ("human",
+        #      "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
+        #      "Given the article:\n"
+        #      "{article}\n"
+        #      "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
+        #      "Format your response as follows:\n"
+        #      "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
+        #      "2. KEY HIGHLIGHTS: 3-5 concise statements (50-100 words total) highlighting the most important facts, data points, or claims, ensuring ALL critical information is covered\n\n"
+        #      "Focus on accuracy and factual information from article only.\n"
+        #      "For lengthy articles, prioritize the most significant content, and key points.\n"
+        #      "Provide ONLY the formatted summary and highlights without additional commentary.\n"
+        #     )
+        # ])
         # sections will be passed as a newline-separated string or empty
         self.chain = self.prompt | self.llm | StrOutputParser()
 
-    def run(self, article: str, sections: List[str]) -> str:
-        # LCEL automatically handles passing inputs as dict
-        return self.chain.invoke({"article": article, "sections": "\n".join(sections)})
+    # def run(self, article: str, sections: List[str]) -> str:
+    #     # LCEL automatically handles passing inputs as dict
+    #     return self.chain.invoke({"article": article, "sections": "\n".join(sections)})
+
+    def run(self, query: str, article: str, sections: List[str]) -> str:
+        return self.chain.invoke({"query": query, "article": article, "sections": "\n".join(sections)})
 
 class QAAgent:
     def __init__(self, llm=None):
