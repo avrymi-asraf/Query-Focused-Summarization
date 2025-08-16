@@ -167,6 +167,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_iterations', type=int, default=5, help='Maximum number of iterations')
     parser.add_argument('--output_format', type=str, choices=['print', 'json'], default='print', 
                        help='Output format: print for console output or json for structured data')
+    parser.add_argument('--json_path', type=str, required=False, help='If set with --output_format json, write JSON output directly to this file path')
+    
     args = parser.parse_args()
 
 
@@ -190,7 +192,13 @@ if __name__ == '__main__':
     )
     
     if args.output_format == 'json':
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        if args.json_path:
+            # Ensure directory exists and write JSON directly to file
+            os.makedirs(os.path.dirname(args.json_path), exist_ok=True)
+            with open(args.json_path, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+        else:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         final_summary, num_iters = result
         print("\nFinal Summary after workflow:")
