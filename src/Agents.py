@@ -18,8 +18,8 @@ rate_limiter = InMemoryRateLimiter(
 
 
 # Use the model with highest RPM/RPD for free tier
-_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=rate_limiter)
-_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400, rate_limiter=rate_limiter)
+_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
 
 # Helper function to extract text/content from various response types
 def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
