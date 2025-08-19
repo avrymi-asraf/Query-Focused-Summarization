@@ -5,6 +5,8 @@ from Agents import (
     Judge,
     JudgeEvaluation,
     QuestionsOutput,
+    QAAgentEvaluationsOutput,
+    QuestionEvaluation,
 )
 import argparse
 import os
@@ -92,18 +94,21 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         iteration_data = {
             "iteration_number": iteration + 1,
             "summary": "",
-            "qa_pairs": [],
+            "qa_evaluations": [],  # full evaluation objects (dict-form)
+            "qa_pairs": [],         # simplified question-answer pairs for judge reference
             "judge": None
         }
         # 2. Summarizer
         current_summary = summarizer.run(query=query, article=article, sections=sections_to_highlight)
         iteration_data["summary"] = current_summary
 
-        # 3. QA (structured list of dicts)
-        qa_struct = qa_agent.run(questions_output=questions_output, summary=current_summary)
-        # Convert to simple list of dicts for Judge + JSON output
+        # 3. QA Evaluations (includes answers + result + issue)
+        qa_evaluations_struct: QAAgentEvaluationsOutput = qa_agent.run(questions_output=questions_output, summary=current_summary)
+        # Store full evaluations (model_dump for JSON serialization)
+        iteration_data["qa_evaluations"] = [ev.model_dump() for ev in qa_evaluations_struct.evaluations]
+        # Derive simple qa_pairs for Judge input
         qa_pairs = [
-            {"question": p.question, "answer": p.answer} for p in qa_struct.pairs
+            {"question": ev.qa.question, "answer": ev.qa.answer} for ev in qa_evaluations_struct.evaluations
         ]
         iteration_data["qa_pairs"] = qa_pairs
 
@@ -119,7 +124,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             return workflow_result
         else:
             # Extract guidance topics from failed questions explanations
-            sections_to_highlight = [qe.issue or qe.question for qe in judge_eval.evaluations if not qe.result]
+            sections_to_highlight = [qe.issue or qe.qa.question for qe in judge_eval.evaluations if not qe.result]
 
     # Max iterations reached
     workflow_result["final_summary"] = current_summary

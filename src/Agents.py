@@ -38,7 +38,7 @@ class QAAgent:
 
 
 class QuestionEvaluation(BaseModel):
-    question: str
+    qa: QAAgent.QAPair
     result: bool
     issue: Optional[str] = None
 
@@ -46,6 +46,11 @@ class QuestionEvaluation(BaseModel):
 class JudgeEvaluation(BaseModel):
     evaluations: List[QuestionEvaluation]
     judgment: bool
+
+class QAAgentEvaluationsOutput(BaseModel):
+    """Structured output for QAAgentRunner: evaluations over questions based only on the summary."""
+    evaluations: List[QuestionEvaluation]
+
 
 
 # ---------------------------------------------------------------------------
@@ -109,21 +114,29 @@ class Summarizer:
 # ---------------------------------------------------------------------------
 # QA Agent (simplified structured output)
 # ---------------------------------------------------------------------------
+
 class QAAgentRunner:
     def __init__(self, llm=None):
         base_llm = llm or _llm
-        self.llm = base_llm.with_structured_output(QAAgent.QAPairsOutput)
+        # Ask the model directly for evaluations (question+answer+result+issue)
+        self.llm = base_llm.with_structured_output(QAAgentEvaluationsOutput)
         self.prompt = ChatPromptTemplate.from_messages([
             (
                 "human",
-                "You are a careful answer extractor.\n\n"
+                "You are a careful answer extractor and adequacy assessor.\n\n"
                 "Summary (ONLY source of truth):\n{summary}\n\n"
-                "Answer EACH question using ONLY the summary.\n\nRules:\n"
-                "- If the summary contains a direct answer, give it concisely.\n"
-                "- If partial info exists, return only that (no speculation).\n"
-                "- If nothing relevant exists, set answer EXACTLY to: Not enough information in summary\n"
-                "- Do not invent facts.\n\n"
-                "Return ONLY JSON with key 'pairs'. Each element needs 'question' and 'answer'.\n\n"
+                "For EACH question do ALL of the following USING ONLY the summary:\n"
+                "1. Provide an answer derived strictly from the summary.\n"
+                "2. Determine if the summary provides enough information for a reliable answer.\n"
+                "3. If there is NO relevant info, answer EXACTLY: Not enough information in summary\n"
+                "4. Set result=false when the answer is the fallback OR when information is clearly partial/insufficient.\n"
+                "5. When result=false give a short issue explaining what is missing (or 'Not enough information').\n\n"
+                "Rules:\n"
+                "- Never speculate beyond the summary.\n"
+                "- If partial data exists, answer ONLY what is present and set result=false with an issue like 'partial information'.\n"
+                "- If sufficient and direct, set result=true and leave issue null.\n\n"
+                "Return ONLY valid JSON with key 'evaluations'. Each element object must match schema:\n"
+                "{{ 'qa': {{ 'question': <original>, 'answer': <answer> }}, 'result': <bool>, 'issue': <string|null> }}\n\n"
                 "Questions:\n{questions}"
             )
         ])
@@ -136,7 +149,7 @@ class QAAgentRunner:
             | self.llm
         )
 
-    def run(self, questions_output: QuestionsOutput, summary: str) -> QAAgent.QAPairsOutput:
+    def run(self, questions_output: QuestionsOutput, summary: str) -> QAAgentEvaluationsOutput:
         return self.chain.invoke({
             "questions_list": questions_output.questions,
             "summary": summary
@@ -185,6 +198,7 @@ __all__ = [
     "Summarizer",
     "QAAgent",
     "QAAgentRunner",
+    "QAAgentEvaluationsOutput",
     "QuestionEvaluation",
     "JudgeEvaluation",
     "Judge",
