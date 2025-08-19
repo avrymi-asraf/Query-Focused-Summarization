@@ -1,196 +1,195 @@
 import os
-from typing import List, Tuple, Union, Dict, Any
+from typing import List, Union, Dict, Any, Optional
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
+from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.rate_limiters import InMemoryRateLimiter
+from pydantic import BaseModel, Field
 
-# Define the LLM instance to be reused
+# ---------------------------------------------------------------------------
+# Environment & shared LLM setup
+# ---------------------------------------------------------------------------
 load_dotenv()
-
 rate_limiter = InMemoryRateLimiter(
     requests_per_second=0.233,
-    check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
-    max_bucket_size=14,  # maximum burst size.
+    check_every_n_seconds=0.1,
+    max_bucket_size=14,
 )
-
-
-# Use the model with highest RPM/RPD for free tier
 _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
 _llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
 
-# Helper function to extract text/content from various response types
-def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
-    if isinstance(response, dict):
-        # Prioritize 'content' for ChatMessage objects, then 'text'
-        return response.get("content", response.get("text", ""))
-    return str(response) # Ensure it's always a string
 
-# --- Custom Output Parsers ---
+# ---------------------------------------------------------------------------
+# Data Models
+# ---------------------------------------------------------------------------
+class QuestionsOutput(BaseModel):
+    questions: List[str] = Field(..., description="Exactly 5 diagnostic questions relevant to the query and article.")
 
-class QuestionListParser(BaseOutputParser[List[str]]):
-    """Parses a newline-separated string of questions into a list of strings."""
-    def parse(self, text: str) -> List[str]:
-        return [q.strip() for q in text.split("\n") if q.strip()]
 
-class QAPairsParser(BaseOutputParser[List[Tuple[str, str]]]):
-    """Parses a newline-separated string of 'question: answer' pairs."""
-    def parse(self, text: str) -> List[Tuple[str, str]]:
-        pairs = []
-        for line in text.split("\n"):
-            if ":" in line:
-                q, a = line.split(":", 1)
-                pairs.append((q.strip("- ").strip(), a.strip()))
-        return pairs
+class QAAgent:
+    class QAPair(BaseModel):
+        question: str = Field(..., description="Original question (verbatim)")
+        answer: str = Field(..., description="Answer derived ONLY from the summary or fallback text if insufficient info")
 
-class JudgeOutputParser(BaseOutputParser[Tuple[bool, List[str]]]):
-    """Parses the Judge's response into (needs_iteration, missing_topics_list)."""
-    def parse(self, text: str) -> Tuple[bool, List[str]]:
-        reply = text.strip().upper()
-        if reply == "OK":
-            return False, []
-        return True, [t.strip("- ") for t in text.split("\n") if t.strip()]
+    class QAPairsOutput(BaseModel):
+        pairs: List["QAAgent.QAPair"]
 
-# --- Agents using LCEL ---
 
+class QuestionEvaluation(BaseModel):
+    question: str
+    result: bool
+    issue: Optional[str] = None
+
+
+class JudgeEvaluation(BaseModel):
+    evaluations: List[QuestionEvaluation]
+    judgment: bool
+
+
+# ---------------------------------------------------------------------------
+# Question Generator
+# ---------------------------------------------------------------------------
 class QuestionGenerator:
     def __init__(self, llm=None):
-        self.llm = llm or _llm # Use the global _llm if not provided
+        base_llm = llm or _llm
+        self.llm = base_llm.with_structured_output(QuestionsOutput)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-             "Given the user query:\n"
-             "{query}\n"
-             "and the article:\n"
-             "{article}\n"
-             "Generate exactly 5 diagnostic questions that help assess understanding of the article in relation to the query.\n\n"
-             "Guidelines for questions:\n"
-             "- Include a mix of factual, analytical, and inferential questions\n"
-             "- Ensure questions cover different aspects/sections of the article\n"
-             "- Make questions specific and directly answerable from the article content\n"
-             "- Vary complexity from straightforward recall to deeper analysis\n"
-             "- All questions must be relevant to both the article content and user query\n\n"
-             "Format: Output ONLY the 5 questions, one per line, without numbering or any additional text."
-             )
+            (
+                "human",
+                "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
+                "User Query:\n{query}\n\n"
+                "Article Content:\n{article}\n\n"
+                "Task: Generate exactly 5 diverse, diagnostic questions that evaluate understanding of the article in relation to the user query.\n\n"
+                "Guidelines:\n"
+                "- Mix factual, analytical, and inferential perspectives\n"
+                "- Cover different important sections/aspects\n"
+                "- Each question must be answerable directly from the article\n"
+                "- No duplicate focus; vary depth and angle\n"
+                "- Must stay tightly relevant to the query AND the article\n\n"
+                "Return ONLY valid JSON for the schema with key 'questions'."
+            )
         ])
-        self.chain = self.prompt | self.llm | StrOutputParser() | QuestionListParser()
+        self.chain = self.prompt | self.llm
 
-    def run(self, query: str, article: str) -> List[str]:
+    def run(self, query: str, article: str) -> QuestionsOutput:
         return self.chain.invoke({"query": query, "article": article})
 
+
+# ---------------------------------------------------------------------------
+# Summarizer
+# ---------------------------------------------------------------------------
 class Summarizer:
     def __init__(self, llm=None):
         self.llm = llm or _llm_summarizer
-
         self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are an expert summarizer tasked with creating a summary of an article from a specific user's perspective.\n\n"
-             "User's Query/Perspective:\n"  # Add the query here
-             "{query}\n\n"
-             "Given the article:\n"
-             "{article}\n\n"
-             "In this iteration, specifically focus on these topics (if provided):\n{sections}\n\n"
-             "Format your response as follows:\n"
-             "1. SUMMARY: A cohesive 200-250 word overview that directly addresses the user's query, pulling all relevant information from the article.\n"
-             "2. KEY HIGHLIGHTS: 3-5 concise statements highlighting the most important facts, data points, or claims relevant to the query.\n\n"
-             "Focus ONLY on information that is relevant to the user's query.\n"
-             "Provide ONLY the formatted summary and highlights without additional commentary.\n"
-             )
+            (
+                "human",
+                "You are an expert summarizer tasked with creating a summary of an article from a specific user's perspective.\n\n"
+                "User's Query/Perspective:\n{query}\n\n"
+                "Given the article:\n{article}\n\n"
+                "In this iteration, specifically focus on these topics (if provided):\n{sections}\n\n"
+                "Format your response as follows:\n"
+                "1. SUMMARY: A cohesive 200-250 word overview that directly addresses the user's query.\n"
+                "2. KEY HIGHLIGHTS: 3-5 concise statements highlighting the most important facts relevant to the query.\n\n"
+                "Focus ONLY on information relevant to the user's query. Provide ONLY the formatted summary and highlights."
+            )
         ])
-
-        # self.prompt = ChatPromptTemplate.from_messages([
-        #     ("human",
-        #      "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-        #      "Given the article:\n"
-        #      "{article}\n"
-        #      "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
-        #      "Format your response as follows:\n"
-        #      "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
-        #      "2. KEY HIGHLIGHTS: 3-5 concise statements (50-100 words total) highlighting the most important facts, data points, or claims, ensuring ALL critical information is covered\n\n"
-        #      "Focus on accuracy and factual information from article only.\n"
-        #      "For lengthy articles, prioritize the most significant content, and key points.\n"
-        #      "Provide ONLY the formatted summary and highlights without additional commentary.\n"
-        #     )
-        # ])
-        # sections will be passed as a newline-separated string or empty
         self.chain = self.prompt | self.llm | StrOutputParser()
 
-    # def run(self, article: str, sections: List[str]) -> str:
-    #     # LCEL automatically handles passing inputs as dict
-    #     return self.chain.invoke({"article": article, "sections": "\n".join(sections)})
-
     def run(self, query: str, article: str, sections: List[str]) -> str:
-        return self.chain.invoke({"query": query, "article": article, "sections": "\n".join(sections)})
+        return self.chain.invoke({
+            "query": query,
+            "article": article,
+            "sections": "\n".join(sections) if sections else "(none)"
+        })
 
-class QAAgent:
+
+# ---------------------------------------------------------------------------
+# QA Agent (simplified structured output)
+# ---------------------------------------------------------------------------
+class QAAgentRunner:
     def __init__(self, llm=None):
-        self.llm = llm or _llm
+        base_llm = llm or _llm
+        self.llm = base_llm.with_structured_output(QAAgent.QAPairsOutput)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
-             "# Evaluation Task\n\n"
-             "Based STRICTLY on this summary (do not use outside knowledge):\n"
-             "{summary}\n\n"
-             "Answer each question below. Follow these rules:\n"
-             "- If the summary contains a direct answer, provide it concisely\n"
-             "- If the summary has partial information, provide what's available\n"
-             "- If the summary has no relevant information, respond EXACTLY with 'Not enough information in summary'\n"
-             "- Do not speculate or infer beyond what's explicitly stated\n\n"
-             "Format each response as 'Question: Answer' pairs (one pair per line, with the colon separator).\n\n"
-             "Questions:\n{questions}"
+            (
+                "human",
+                "You are a careful answer extractor.\n\n"
+                "Summary (ONLY source of truth):\n{summary}\n\n"
+                "Answer EACH question using ONLY the summary.\n\nRules:\n"
+                "- If the summary contains a direct answer, give it concisely.\n"
+                "- If partial info exists, return only that (no speculation).\n"
+                "- If nothing relevant exists, set answer EXACTLY to: Not enough information in summary\n"
+                "- Do not invent facts.\n\n"
+                "Return ONLY JSON with key 'pairs'. Each element needs 'question' and 'answer'.\n\n"
+                "Questions:\n{questions}"
             )
         ])
         self.chain = (
-            {"questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions"])),
-             "summary": RunnablePassthrough()} # Pass summary through
+            {
+                "questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions_list"])),
+                "summary": RunnablePassthrough(),
+            }
             | self.prompt
             | self.llm
-            | StrOutputParser()
-            | QAPairsParser()
         )
 
-    def run(self, questions: List[str], summary: str) -> List[Tuple[str, str]]:
-        # Pass a dictionary for multiple inputs
-        return self.chain.invoke({"questions": questions, "summary": summary})
+    def run(self, questions_output: QuestionsOutput, summary: str) -> QAAgent.QAPairsOutput:
+        return self.chain.invoke({
+            "questions_list": questions_output.questions,
+            "summary": summary
+        })
 
 
+# ---------------------------------------------------------------------------
+# Judge
+# ---------------------------------------------------------------------------
 class Judge:
     def __init__(self, llm=None):
-        self.llm = llm or _llm
+        self.llm = (llm or _llm).with_structured_output(JudgeEvaluation)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
-             "# Evaluation Task\n\n"
-             "Article:\n{article}\n\n"
-             "Summary:\n{summary}\n\n"
-             "QA pairs (from summary):\n{qa_pairs}\n\n"
-             "## Instructions\n"
-             "Evaluate on these specific criteria:\n"
-             "1. FACTUAL ACCURACY: Are all facts from the article correctly represented?\n"
-             "2. COMPLETENESS: Are any major topics, arguments, or key points missing?\n"
-             "3. SPECIFICITY: Are important numerical data, dates, names, or specific details included?\n"
-             "4. QA ACCURACY: Do the answers match what's in the original article?\n\n"
-             "If ALL criteria are satisfied, respond with EXACTLY 'OK'.\n"
-             "Otherwise, list each missing or incorrectly addressed topic on a new line with a hyphen, focusing on substance rather than style."
-             )
+            (
+                "human",
+                "You are a critical evaluator focused on factual accuracy, completeness, and specificity.\n\n"
+                "Article (reference):\n{article}\n\n"
+                "Summary (to evaluate):\n{summary}\n\n"
+                "QA pairs (from summary):\n{qa_pairs}\n\n"
+                "Evaluate each question-answer ONLY using the article. For each pair: set result=true if the answer is accurate, complete, and specific; else result=false with a concise explanation in 'issue'.\n"
+                "Overall 'judgment' is true only if ALL answers pass AND the summary has no major omissions or factual errors.\n\n"
+                "Return ONLY structured JSON per schema."
+            )
         ])
         self.chain = (
-            {"qa_pairs": RunnableLambda(lambda x: "\n".join(f"{q}: {a}" for q, a in x["qa_pairs"])),
-             "article": RunnablePassthrough(),
-             "summary": RunnablePassthrough()}
+            {
+                "qa_pairs": RunnableLambda(lambda x: "\n".join(f"{p['question']}: {p['answer']}" for p in x["qa_pairs"])),
+                "article": RunnablePassthrough(),
+                "summary": RunnablePassthrough(),
+            }
             | self.prompt
             | self.llm
-            | StrOutputParser()
-            | JudgeOutputParser()
         )
 
-    def run(self, article: str, summary: str, qa_pairs: List[Tuple[str, str]]) -> Tuple[bool, List[str]]:
-        # Pass a dictionary for multiple inputs
-        return self.chain.invoke({"article": article, "summary": summary, "qa_pairs": qa_pairs})
+    def run(self, article: str, summary: str, qa_pairs: List[Dict[str, str]]) -> JudgeEvaluation:
+        return self.chain.invoke({
+            "article": article,
+            "summary": summary,
+            "qa_pairs": qa_pairs
+        })
+
+
+__all__ = [
+    "QuestionsOutput",
+    "QuestionGenerator",
+    "Summarizer",
+    "QAAgent",
+    "QAAgentRunner",
+    "QuestionEvaluation",
+    "JudgeEvaluation",
+    "Judge",
+]
 
 
 if __name__ == "__main__":
-    # Dummy data for testing
     pass

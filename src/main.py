@@ -1,4 +1,11 @@
-from Agents import QuestionGenerator, Summarizer, QAAgent, Judge
+from Agents import (
+    QuestionGenerator,
+    Summarizer,
+    QAAgentRunner,
+    Judge,
+    JudgeEvaluation,
+    QuestionsOutput,
+)
 import argparse
 import os
 import json
@@ -58,13 +65,15 @@ def load_file_content(file_path: str) -> str:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-def run_summarization_workflow(query: str, article: str, max_iterations: int = 4, output_format: str = "print"):
+def run_summarization_workflow(query: str, article: str, max_iterations: int = 4):
     question_gen = QuestionGenerator()
     summarizer = Summarizer()
-    qa_agent = QAAgent()
+    qa_agent = QAAgentRunner()
     judge_agent = Judge()
 
-    questions = question_gen.run(query=query, article=article)
+    questions_output: QuestionsOutput = question_gen.run(query=query, article=article)
+    # Keep full structured questions output; also retain the list for convenience
+    questions = questions_output.questions
     current_summary = ""
     sections_to_highlight = [] # For initial run, empty
     
@@ -75,7 +84,8 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         "iterations": [],
         "final_summary": "",
         "total_iterations": 0,
-        "status": ""
+        "status": "",
+        "questions": questions  # store initial generated questions
     }
 
     for iteration in range(max_iterations):
@@ -83,81 +93,39 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             "iteration_number": iteration + 1,
             "summary": "",
             "qa_pairs": [],
-            "needs_iteration": False,
-            "missing_topics": []
+            "judge": None
         }
-        
-        if output_format == "print":
-            print(f"\n--- Iteration {iteration + 1} ---")
-
         # 2. Summarizer
-        # current_summary = summarizer.run(article=article, sections=sections_to_highlight) #todo: maybe also send quary here?
-
         current_summary = summarizer.run(query=query, article=article, sections=sections_to_highlight)
-
         iteration_data["summary"] = current_summary
-        
-        if output_format == "print":
-            print("Generated Summary (this iter):")
-            # Format the summary for better readability
-            formatted_summary = current_summary.replace("1. SUMMARY:", "\n1. SUMMARY:").replace("2. KEY HIGHLIGHTS:", "\n\n2. KEY HIGHLIGHTS:")
-            # Add line breaks after bullet points and periods in highlights
-            formatted_summary = formatted_summary.replace("* ", "\n* ").replace("• ", "\n• ")
-            
-            # Break up long paragraphs by adding line breaks after sentences
-            import re
-            # Add line breaks after sentences (period followed by space and capital letter)
-            formatted_summary = re.sub(r'(\. )([A-Z])', r'\1\n\2', formatted_summary)
-            # Also break after sentences ending with period at end of line
-            formatted_summary = re.sub(r'(\.)( +)([A-Z])', r'\1\n\3', formatted_summary)
-            
-            print(formatted_summary)
 
-        # 3. QA
-        qa_pairs = qa_agent.run(questions=questions, summary=current_summary)
+        # 3. QA (structured list of dicts)
+        qa_struct = qa_agent.run(questions_output=questions_output, summary=current_summary)
+        # Convert to simple list of dicts for Judge + JSON output
+        qa_pairs = [
+            {"question": p.question, "answer": p.answer} for p in qa_struct.pairs
+        ]
         iteration_data["qa_pairs"] = qa_pairs
-        
-        if output_format == "print":
-            print("QA Pairs based on Summary (this iter):")
-            for q, a in qa_pairs:
-                print(f"Q: {q}\nA: {a}")
 
         # 4. Judge
-        needs_iteration, missing_topics = judge_agent.run(
-            article=article,
-            summary=current_summary,
-            qa_pairs=qa_pairs
-        )
-        
-        iteration_data["needs_iteration"] = needs_iteration
-        iteration_data["missing_topics"] = missing_topics
+        judge_eval: JudgeEvaluation = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
+        iteration_data["judge"] = judge_eval.model_dump()
         workflow_result["iterations"].append(iteration_data)
 
-        if not needs_iteration:
+        if judge_eval.judgment:
             workflow_result["final_summary"] = current_summary
             workflow_result["total_iterations"] = iteration + 1
             workflow_result["status"] = "completed"
-            
-            if output_format == "print":
-                print("\nJudge satisfied! Summary is comprehensive.")
-                return current_summary, iteration + 1
-            else:
-                return workflow_result
+            return workflow_result
         else:
-            if output_format == "print":
-                print(f"\nJudge found missing topics. Needs another iteration. Missing topics: {missing_topics}")
-            sections_to_highlight = missing_topics # Pass missing topics back for next summarization
+            # Extract guidance topics from failed questions explanations
+            sections_to_highlight = [qe.issue or qe.question for qe in judge_eval.evaluations if not qe.result]
 
     # Max iterations reached
     workflow_result["final_summary"] = current_summary
     workflow_result["total_iterations"] = max_iterations
     workflow_result["status"] = "max_iterations_reached"
-    
-    if output_format == "print":
-        print(f"\nMax iterations ({max_iterations}) reached. Returning current summary.")
-        return current_summary, max_iterations
-    else:
-        return workflow_result
+    return workflow_result
 
 
 if __name__ == '__main__':
@@ -165,9 +133,7 @@ if __name__ == '__main__':
     parser.add_argument('--file', type=str, required=True, help='Path to the article file (PDF or text)')
     parser.add_argument('--query', type=str, required=True, help='Query for summarization')
     parser.add_argument('--max_iterations', type=int, default=5, help='Maximum number of iterations')
-    parser.add_argument('--output_format', type=str, choices=['print', 'json'], default='print', 
-                       help='Output format: print for console output or json for structured data')
-    parser.add_argument('--json_path', type=str, required=False, help='If set with --output_format json, write JSON output directly to this file path')
+    parser.add_argument('--json_path', type=str, required=False, help='If set, write JSON output directly to this file path')
     
     args = parser.parse_args()
 
@@ -187,32 +153,13 @@ if __name__ == '__main__':
     result = run_summarization_workflow(
         query=args.query,
         article=article_content,
-        max_iterations=args.max_iterations,
-        output_format=args.output_format
+        max_iterations=args.max_iterations
     )
-    
-    if args.output_format == 'json':
-        if args.json_path:
-            # Ensure directory exists and write JSON directly to file
-            os.makedirs(os.path.dirname(args.json_path), exist_ok=True)
-            with open(args.json_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
-        else:
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    # Always output JSON now
+    if args.json_path:
+        os.makedirs(os.path.dirname(args.json_path), exist_ok=True)
+        with open(args.json_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
     else:
-        final_summary, num_iters = result
-        print("\nFinal Summary after workflow:")
-        # Format the final summary for better readability
-        formatted_final_summary = final_summary.replace("1. SUMMARY:", "\n1. SUMMARY:").replace("2. KEY HIGHLIGHTS:", "\n\n2. KEY HIGHLIGHTS:")
-        # Add line breaks after bullet points and periods in highlights
-        formatted_final_summary = formatted_final_summary.replace("* ", "\n* ").replace("• ", "\n• ")
-        
-        # Break up long paragraphs by adding line breaks after sentences
-        import re
-        # Add line breaks after sentences (period followed by space and capital letter)
-        formatted_final_summary = re.sub(r'(\. )([A-Z])', r'\1\n\2', formatted_final_summary)
-        # Also break after sentences ending with period at end of line
-        formatted_final_summary = re.sub(r'(\.)( +)([A-Z])', r'\1\n\3', formatted_final_summary)
-        
-        print(formatted_final_summary)
-        print(f"\nWorkflow completed in {num_iters} iterations.")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
