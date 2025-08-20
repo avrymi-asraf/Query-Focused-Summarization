@@ -3,10 +3,9 @@ from Agents import (
     Summarizer,
     QAAgentRunner,
     Judge,
-    JudgeEvaluation,
-    QuestionsOutput,
-    QAAgentEvaluationsOutput,
-    QuestionEvaluation,
+    JudgeEvaluationType,
+    QuestionsOutputType,
+    QAAgentEvaluationsOutputType,
 )
 import argparse
 import os
@@ -73,7 +72,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
     qa_agent = QAAgentRunner()
     judge_agent = Judge()
 
-    questions_output: QuestionsOutput = question_gen.run(query=query, article=article)
+    questions_output: QuestionsOutputType = question_gen.run(query=query, article=article)
     # Keep full structured questions output; also retain the list for convenience
     questions = questions_output.questions
     current_summary = ""
@@ -103,7 +102,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         iteration_data["summary"] = current_summary
 
         # 3. QA Evaluations (includes answers + result + issue)
-        qa_evaluations_struct: QAAgentEvaluationsOutput = qa_agent.run(questions_output=questions_output, summary=current_summary)
+        qa_evaluations_struct: QAAgentEvaluationsOutputType = qa_agent.run(questions_output=questions_output, summary=current_summary)
         # Store full evaluations (model_dump for JSON serialization)
         iteration_data["qa_evaluations"] = [ev.model_dump() for ev in qa_evaluations_struct.evaluations]
         # Derive simple qa_pairs for Judge input
@@ -113,7 +112,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         iteration_data["qa_pairs"] = qa_pairs
 
         # 4. Judge
-        judge_eval: JudgeEvaluation = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
+        judge_eval: JudgeEvaluationType = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
         iteration_data["judge"] = judge_eval.model_dump()
         workflow_result["iterations"].append(iteration_data)
 
