@@ -1,4 +1,9 @@
-"""Clean agent & model definitions with Type-suffixed data models."""
+"""Agent & model definitions.
+
+Each agent now creates its own LLM instance internally using a simple
+`InMemoryRateLimiter` built from the value passed in via the constructor.
+No shared globals and no helper factory functions (kept intentionally simple).
+"""
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
@@ -9,13 +14,6 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 from pydantic import BaseModel, Field
 
 load_dotenv()
-rate_limiter = InMemoryRateLimiter(
-    requests_per_second=0.233,
-    check_every_n_seconds=0.1,
-    max_bucket_size=14,
-)
-_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
-_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
 
 # Data Models ----------------------------------------------------------------
 class QuestionsOutputType(BaseModel):
@@ -45,8 +43,16 @@ class QAAgent:  # Placeholder
 
 # Question Generator ---------------------------------------------------------
 class QuestionGenerator:
-    def __init__(self, llm=None):
-        base_llm = llm or _llm
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
@@ -69,8 +75,16 @@ class QuestionGenerator:
 
 # Summarizer -----------------------------------------------------------------
 class Summarizer:
-    def __init__(self, llm=None):
-        self.llm = llm or _llm_summarizer
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
              "You are an expert summarizer tasked with creating a summary of an article from a specific user's perspective.\n\n"
@@ -93,8 +107,16 @@ class Summarizer:
 
 # QA Agent Runner ------------------------------------------------------------
 class QAAgentRunner:
-    def __init__(self, llm=None):
-        base_llm = llm or _llm
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.llm = base_llm.with_structured_output(QAAgentEvaluationsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
@@ -127,8 +149,17 @@ class QAAgentRunner:
 
 # Judge ----------------------------------------------------------------------
 class Judge:
-    def __init__(self, llm=None):
-        self.llm = (llm or _llm).with_structured_output(JudgeEvaluationType)
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+        self.llm = llm.with_structured_output(JudgeEvaluationType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
              "You are a critical evaluator focused on factual accuracy, completeness, and specificity.\n\n"

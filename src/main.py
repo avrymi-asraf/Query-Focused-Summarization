@@ -66,11 +66,19 @@ def load_file_content(file_path: str) -> str:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-def run_summarization_workflow(query: str, article: str, max_iterations: int = 4):
-    question_gen = QuestionGenerator()
-    summarizer = Summarizer()
-    qa_agent = QAAgentRunner()
-    judge_agent = Judge()
+def run_summarization_workflow(query: str, article: str, max_iterations: int = 4, requests_per_second: float | None = None):
+    """Run the iterative query-focused summarization workflow.
+
+    Args:
+        query: User query / focus.
+        article: Full article content (markdown or text).
+        max_iterations: Iteration cap.
+        requests_per_second: Rate limit applied per agent instance.
+    """
+    question_gen = QuestionGenerator(requests_per_second=requests_per_second)
+    summarizer = Summarizer(requests_per_second=requests_per_second)
+    qa_agent = QAAgentRunner(requests_per_second=requests_per_second)
+    judge_agent = Judge(requests_per_second=requests_per_second)
 
     questions_output: QuestionsOutputType = question_gen.run(query=query, article=article)
     # Keep full structured questions output; also retain the list for convenience
@@ -138,6 +146,7 @@ if __name__ == '__main__':
     parser.add_argument('--query', type=str, required=True, help='Query for summarization')
     parser.add_argument('--max_iterations', type=int, default=5, help='Maximum number of iterations')
     parser.add_argument('--json_path', type=str, required=False, help='If set, write JSON output directly to this file path')
+    parser.add_argument('--limiter', type=float, required=False, help='If set, requests per second for each agent rate limiter.')
     
     args = parser.parse_args()
 
@@ -157,7 +166,8 @@ if __name__ == '__main__':
     result = run_summarization_workflow(
         query=args.query,
         article=article_content,
-        max_iterations=args.max_iterations
+    max_iterations=args.max_iterations,
+    requests_per_second=args.limiter if 'limiter' in args and args.limiter is not None else None,
     )
 
     # Always output JSON now
