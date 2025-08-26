@@ -17,7 +17,16 @@ load_dotenv()
 
 # Data Models ----------------------------------------------------------------
 class QuestionsOutputType(BaseModel):
-    questions: List[str] = Field(..., description="Exactly 5 diagnostic questions relevant to the query and article.")
+    questions: List[str] = Field(
+        ..., description="Exactly 5 diagnostic questions relevant to the query and article."
+    )
+    acu_questions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "0-5 ACU questions. Each MUST start with 'ACU.' and ask for a single short fact, "
+            "number, or entity tied to the query, with an unambiguous answer."
+        ),
+    )
 
 class QAPairType(BaseModel):
     question: str = Field(..., description="Original question (verbatim)")
@@ -55,18 +64,27 @@ class QuestionGenerator:
             base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-             "User Query:\n{query}\n\n"
-             "Article Content:\n{article}\n\n"
-             "Task: Generate exactly 5 diverse, diagnostic questions that evaluate understanding of the article in relation to the user query.\n\n"
-             "Guidelines:\n"
-             "- Mix factual, analytical, and inferential perspectives\n"
-             "- Cover different important sections/aspects\n"
-             "- Each question must be answerable directly from the article\n"
-             "- No duplicate focus; vary depth and angle\n"
-             "- Must stay tightly relevant to the query AND the article\n\n"
-             "Return ONLY valid JSON for the schema with key 'questions'.")
+            (
+                "human",
+                "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
+                "User Query:\n{query}\n\n"
+                "Article Content:\n{article}\n\n"
+                "Task: Produce BOTH of the following:\n"
+                "- Exactly 5 diverse diagnostic questions in 'questions' that evaluate understanding of the article in relation to the user query.\n"
+                "- 0 to 5 ACU questions in 'acu_questions'. ACU questions MUST begin with 'ACU.' and request a single short, unambiguous fact (number, date, named entity, or atomic fact) that directly connects to the query.\n\n"
+                "Guidelines for 'questions':\n"
+                "- Mix factual, analytical, and inferential perspectives\n"
+                "- Cover different important sections/aspects\n"
+                "- Each question must be answerable directly from the article\n"
+                "- No duplicate focus; vary depth and angle\n"
+                "- Must stay tightly relevant to the query AND the article\n\n"
+                "Guidelines for 'acu_questions':\n"
+                "- Each MUST start with 'ACU.' (e.g., 'ACU. What year was X founded?')\n"
+                "- Keep answers unambiguous and short: a single number, date, or named entity\n"
+                "- Avoid multi-part questions\n"
+                "- Only include ACUs when the article clearly contains the atomic fact\n\n"
+                "Return ONLY valid JSON adhering to the schema with keys 'questions' and 'acu_questions'.",
+            )
         ])
         self.chain = self.prompt | self.llm
 
@@ -136,16 +154,19 @@ class QAAgentRunner:
              "Schema example (literals, not placeholders): {{ 'qa': {{ 'question': <original>, 'answer': <answer> }}, 'result': <bool>, 'issue': <string|null> }}\n\n"
              "Questions:\n{questions}")
         ])
-        self.chain = ({
-            "questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions_list"])),
-            "summary": RunnablePassthrough(),
-        } | self.prompt | self.llm)
+        self.chain = (
+            {
+                "questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions_list"])),
+                "summary": RunnablePassthrough(),
+            }
+            | self.prompt
+            | self.llm
+        )
 
     def run(self, questions_output: QuestionsOutputType, summary: str) -> QAAgentEvaluationsOutputType:
-        return self.chain.invoke({
-            "questions_list": questions_output.questions,
-            "summary": summary
-        })
+        # Combine regular and ACU questions (ACUs are already prefixed with 'ACU.' for later identification)
+        combined = list(questions_output.questions) + list(questions_output.acu_questions)
+        return self.chain.invoke({"questions_list": combined, "summary": summary})
 
 # Judge ----------------------------------------------------------------------
 class Judge:

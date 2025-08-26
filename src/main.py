@@ -83,6 +83,7 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
     questions_output: QuestionsOutputType = question_gen.run(query=query, article=article)
     # Keep full structured questions output; also retain the list for convenience
     questions = questions_output.questions
+    acu_questions = getattr(questions_output, 'acu_questions', [])
     current_summary = ""
     sections_to_highlight = [] # For initial run, empty
     
@@ -94,7 +95,9 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         "final_summary": "",
         "total_iterations": 0,
         "status": "",
-        "questions": questions  # store initial generated questions
+    # store initial generated questions
+    "questions": questions,
+    "acu_questions": acu_questions,
     }
 
     for iteration in range(max_iterations):
@@ -103,7 +106,10 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             "summary": "",
             "qa_evaluations": [],  # full evaluation objects (dict-form)
             "qa_pairs": [],         # simplified question-answer pairs for judge reference
-            "judge": None
+            "judge": None,
+            # counts to be filled post-judge
+            "correct_count_all": 0,
+            "correct_count_acu": 0,
         }
         # 2. Summarizer
         current_summary = summarizer.run(query=query, article=article, sections=sections_to_highlight)
@@ -122,6 +128,17 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         # 4. Judge
         judge_eval: JudgeEvaluationType = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
         iteration_data["judge"] = judge_eval.model_dump()
+
+        # 5. Compute ACU metrics from judge evaluations
+        total_correct = sum(1 for ev in judge_eval.evaluations if ev.result)
+        acu_correct = 0
+        for ev in judge_eval.evaluations:
+            q_text = ev.qa.question if hasattr(ev, 'qa') else None
+            if isinstance(q_text, str) and q_text.strip().startswith("ACU."):
+                if ev.result:
+                    acu_correct += 1
+        iteration_data["correct_count_all"] = total_correct
+        iteration_data["correct_count_acu"] = acu_correct
         workflow_result["iterations"].append(iteration_data)
 
         if judge_eval.judgment:
