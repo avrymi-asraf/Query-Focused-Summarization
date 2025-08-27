@@ -67,27 +67,17 @@ def load_file_content(file_path: str) -> str:
             return f.read()
 
 def run_summarization_workflow(query: str, article: str, max_iterations: int = 4, requests_per_second: float | None = None):
-    """Run the iterative query-focused summarization workflow.
-
-    Args:
-        query: User query / focus.
-        article: Full article content (markdown or text).
-        max_iterations: Iteration cap.
-        requests_per_second: Rate limit applied per agent instance.
-    """
     question_gen = QuestionGenerator(requests_per_second=requests_per_second)
     summarizer = Summarizer(requests_per_second=requests_per_second)
     qa_agent = QAAgentRunner(requests_per_second=requests_per_second)
     judge_agent = Judge(requests_per_second=requests_per_second)
 
     questions_output: QuestionsOutputType = question_gen.run(query=query, article=article)
-    # Keep full structured questions output; also retain the list for convenience
     questions = questions_output.questions
     acu_questions = getattr(questions_output, 'acu_questions', [])
     current_summary = ""
-    sections_to_highlight = [] # For initial run, empty
-    
-    # Initialize result structure for JSON output
+    sections_to_highlight: list[str] = []  # focus topics carried across iterations
+
     workflow_result = {
         "query": query,
         "max_iterations": max_iterations,
@@ -95,50 +85,58 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         "final_summary": "",
         "total_iterations": 0,
         "status": "",
-    # store initial generated questions
-    "questions": questions,
-    "acu_questions": acu_questions,
+        "questions": questions,
+        "acu_questions": acu_questions,
     }
 
     for iteration in range(max_iterations):
         iteration_data = {
             "iteration_number": iteration + 1,
             "summary": "",
-            "qa_evaluations": [],  # full evaluation objects (dict-form)
-            "qa_pairs": [],         # simplified question-answer pairs for judge reference
+            "qa_evaluations": [],
+            "qa_pairs": [],
             "judge": None,
-            # counts to be filled post-judge
             "correct_count_all": 0,
             "correct_count_acu": 0,
         }
-        # 2. Summarizer
+
+        # 1. Summarize (never sees raw questions)
         current_summary = summarizer.run(query=query, article=article, sections=sections_to_highlight)
         iteration_data["summary"] = current_summary
 
-        # 3. QA Evaluations (includes answers + result + issue)
-        qa_evaluations_struct: QAAgentEvaluationsOutputType = qa_agent.run(questions_output=questions_output, summary=current_summary)
-        # Store full evaluations (model_dump for JSON serialization)
-        iteration_data["qa_evaluations"] = [ev.model_dump() for ev in qa_evaluations_struct.evaluations]
-        # Derive simple qa_pairs for Judge input
-        qa_pairs = [
-            {"question": ev.qa.question, "answer": ev.qa.answer} for ev in qa_evaluations_struct.evaluations
-        ]
+        # 2. QA over summary
+        qa_evals_struct: QAAgentEvaluationsOutputType = qa_agent.run(
+            questions_output=questions_output,
+            summary=current_summary
+        )
+        iteration_data["qa_evaluations"] = [ev.model_dump() for ev in qa_evals_struct.evaluations]
+        qa_pairs = [{"question": ev.qa.question, "answer": ev.qa.answer} for ev in qa_evals_struct.evaluations]
         iteration_data["qa_pairs"] = qa_pairs
 
-        # 4. Judge
-        judge_eval: JudgeEvaluationType = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
+        # 3. Judge vs full article
+        judge_eval: JudgeEvaluationType = judge_agent.run(
+            article=article,
+            summary=current_summary,
+            qa_pairs=qa_pairs
+        )
         iteration_data["judge"] = judge_eval.model_dump()
 
-        # 5. Compute ACU metrics from judge evaluations
-        total_correct = sum(1 for ev in judge_eval.evaluations if ev.result)
-        acu_correct = 0
-        for ev in judge_eval.evaluations:
-            q_text = ev.qa.question if hasattr(ev, 'qa') else None
-            if isinstance(q_text, str) and q_text.strip().startswith("ACU."):
-                if ev.result:
-                    acu_correct += 1
-        iteration_data["correct_count_all"] = total_correct
-        iteration_data["correct_count_acu"] = acu_correct
+        # 4. ACU miss seeding (only those explicitly flagged as missing atomic fact)
+        missing_acu_concepts = [
+            ev.qa.question.replace("ACU.", "").strip(" :?")
+            for ev in judge_eval.evaluations
+            if ev.qa.question.startswith("ACU.")
+               and not ev.result
+               and (ev.issue or "").lower().startswith("missing atomic fact")
+        ]
+
+        # 5. Metrics
+        iteration_data["correct_count_all"] = sum(1 for ev in judge_eval.evaluations if ev.result)
+        iteration_data["correct_count_acu"] = sum(
+            1 for ev in judge_eval.evaluations
+            if ev.qa.question.startswith("ACU.") and ev.result
+        )
+
         workflow_result["iterations"].append(iteration_data)
 
         if judge_eval.judgment:
@@ -146,16 +144,27 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             workflow_result["total_iterations"] = iteration + 1
             workflow_result["status"] = "completed"
             return workflow_result
-        else:
-            # Extract guidance topics from failed questions explanations
-            sections_to_highlight = [qe.issue or qe.qa.question for qe in judge_eval.evaluations if not qe.result]
 
-    # Max iterations reached
+        # 6. Build next focus topics (deduplicated, order preserved)
+        next_sections: list[str] = []
+        for concept in missing_acu_concepts:
+            if concept and concept not in next_sections:
+                next_sections.append(concept)
+
+        for ev in judge_eval.evaluations:
+            if not ev.result:
+                topic = ev.issue or ev.qa.question
+                if topic.startswith("ACU."):
+                    topic = topic.replace("ACU.", "").strip(" :?")
+                if topic and topic not in next_sections:
+                    next_sections.append(topic)
+
+        sections_to_highlight = next_sections  # carried into next loop
+
     workflow_result["final_summary"] = current_summary
     workflow_result["total_iterations"] = max_iterations
     workflow_result["status"] = "max_iterations_reached"
     return workflow_result
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Query-Focused Summarization Workflow")

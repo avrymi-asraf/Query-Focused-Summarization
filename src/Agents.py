@@ -52,6 +52,13 @@ class QAAgent:  # Placeholder
 
 # Question Generator ---------------------------------------------------------
 class QuestionGenerator:
+    """
+    Produces:
+      - 5 diagnostic questions.
+      - Up to 3 ACU questions (prefixed 'ACU.') that target ONLY easy, high‑salience,
+        explicitly stated atomic facts (numbers, dates, named entities) directly relevant
+        to the user query. Excludes anything requiring inference or aggregation.
+    """
     def __init__(self, requests_per_second: Optional[float]):
         if requests_per_second is not None:
             limiter = InMemoryRateLimiter(
@@ -64,32 +71,33 @@ class QuestionGenerator:
             base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
-            (
-                "human",
-                "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-                "User Query:\n{query}\n\n"
-                "Article Content:\n{article}\n\n"
-                "Task: Produce BOTH of the following:\n"
-                "- Exactly 5 diverse diagnostic questions in 'questions' that evaluate understanding of the article in relation to the user query.\n"
-                "- 0 to 5 ACU questions in 'acu_questions'. ACU questions MUST begin with 'ACU.' and request a single short, unambiguous fact (number, date, named entity, or atomic fact) that directly connects to the query.\n\n"
-                "Guidelines for 'questions':\n"
-                "- Mix factual, analytical, and inferential perspectives\n"
-                "- Cover different important sections/aspects\n"
-                "- Each question must be answerable directly from the article\n"
-                "- No duplicate focus; vary depth and angle\n"
-                "- Must stay tightly relevant to the query AND the article\n\n"
-                "Guidelines for 'acu_questions':\n"
-                "- Each MUST start with 'ACU.' (e.g., 'ACU. What year was X founded?')\n"
-                "- Keep answers unambiguous and short: a single number, date, or named entity\n"
-                "- Avoid multi-part questions\n"
-                "- Only include ACUs when the article clearly contains the atomic fact\n\n"
-                "Return ONLY valid JSON adhering to the schema with keys 'questions' and 'acu_questions'.",
-            )
+            ("human",
+             "You are an expert question formulator.\n"
+             "User Query:\n{query}\n\n"
+             "Article:\n{article}\n\n"
+             "Produce JSON with keys 'questions' and 'acu_questions'.\n\n"
+             "QUESTIONS (exactly 5):\n"
+             "- Diverse (coverage, perspective, depth).\n"
+             "- Directly answerable from the article.\n"
+             "- Strongly tied to BOTH query and content.\n"
+             "- No overlap or trivial rephrases.\n\n"
+             "ACU QUESTIONS (0–3 ONLY):\n"
+             "- Each MUST begin with 'ACU.'\n"
+             "- Only include if ALL criteria met:\n"
+             "  * Explicitly and unambiguously stated (verbatim fact present).\n"
+             "  * High salience (title/abstract/intro/conclusion OR repeated OR central to query relevance).\n"
+             "  * Single atomic datum (number, date, short name, specific entity).\n"
+             "  * Very easy extraction (no synthesis, no calculation, no combining).\n"
+             "- Exclude if inferred, synthesized, multi-part, low importance, or moderate uncertainty.\n"
+             "- Prefer facts that strengthen the user query's core intent.\n"
+             "- If fewer than 1 satisfy the bar, return an empty list.\n\n"
+             "Return ONLY valid JSON for schema.")
         ])
         self.chain = self.prompt | self.llm
 
     def run(self, query: str, article: str) -> QuestionsOutputType:
         return self.chain.invoke({"query": query, "article": article})
+
 
 # Summarizer -----------------------------------------------------------------
 class Summarizer:
@@ -125,6 +133,10 @@ class Summarizer:
 
 # QA Agent Runner ------------------------------------------------------------
 class QAAgentRunner:
+    """
+    Answers both regular and ACU questions ONLY from the summary.
+    ACU success depends on the fact being naturally embedded in the summary text.
+    """
     def __init__(self, requests_per_second: Optional[float]):
         if requests_per_second is not None:
             limiter = InMemoryRateLimiter(
@@ -138,20 +150,15 @@ class QAAgentRunner:
         self.llm = base_llm.with_structured_output(QAAgentEvaluationsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "You are a careful answer extractor and adequacy assessor.\n\n"
-             "Summary (ONLY source of truth):\n{summary}\n\n"
-             "For EACH question do ALL of the following USING ONLY the summary:\n"
-             "1. Provide an answer derived strictly from the summary.\n"
-             "2. Determine if the summary provides enough information for a reliable answer.\n"
-             "3. If there is NO relevant info, answer EXACTLY: Not enough information in summary\n"
-             "4. Set result=false when the answer is the fallback OR when information is clearly partial/insufficient.\n"
-             "5. When result=false give a short issue explaining what is missing (or 'Not enough information').\n\n"
-             "Rules:\n"
-             "- Never speculate beyond the summary.\n"
-             "- If partial data exists, answer ONLY what is present and set result=false with an issue like 'partial information'.\n"
-             "- If sufficient and direct, set result=true and leave issue null.\n\n"
-             "Return ONLY valid JSON with key 'evaluations'. Each element object must match schema:\n"
-             "Schema example (literals, not placeholders): {{ 'qa': {{ 'question': <original>, 'answer': <answer> }}, 'result': <bool>, 'issue': <string|null> }}\n\n"
+             "You answer strictly from the SUMMARY text below.\n\n"
+             "SUMMARY:\n{summary}\n\n"
+             "For each question:\n"
+             "- Use ONLY information present in the summary.\n"
+             "- If question starts with 'ACU.' extract the precise minimal span (number/date/name). If absent verbatim or clearly equivalent, answer exactly: Not enough information in summary\n"
+             "- For non‑ACU: provide best exact answer; if missing, same fallback.\n"
+             "- result=true only if answer is fully supported & specific. Otherwise result=false and issue describes ('missing', 'partial', or 'Not enough information').\n"
+             "- Never invent.\n\n"
+             "Return JSON with key 'evaluations'.\n"
              "Questions:\n{questions}")
         ])
         self.chain = (
@@ -164,12 +171,16 @@ class QAAgentRunner:
         )
 
     def run(self, questions_output: QuestionsOutputType, summary: str) -> QAAgentEvaluationsOutputType:
-        # Combine regular and ACU questions (ACUs are already prefixed with 'ACU.' for later identification)
         combined = list(questions_output.questions) + list(questions_output.acu_questions)
         return self.chain.invoke({"questions_list": combined, "summary": summary})
 
 # Judge ----------------------------------------------------------------------
 class Judge:
+    """
+    Verifies QA against the full article. For ACU: checks that the atomic fact
+    exists in the article and (if present in article) also appears in the summary answer.
+    Guides iteration by flagging missing atomic facts -> feed into next 'sections'.
+    """
     def __init__(self, requests_per_second: Optional[float]):
         if requests_per_second is not None:
             limiter = InMemoryRateLimiter(
@@ -183,13 +194,20 @@ class Judge:
         self.llm = llm.with_structured_output(JudgeEvaluationType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "You are a critical evaluator focused on factual accuracy, completeness, and specificity.\n\n"
-             "Article (reference):\n{article}\n\n"
-             "Summary (to evaluate):\n{summary}\n\n"
-             "QA pairs (from summary):\n{qa_pairs}\n\n"
-             "Evaluate each question-answer ONLY using the article. For each pair: set result=true if the answer is accurate, complete, and specific; else result=false with a concise explanation in 'issue'.\n"
-             "Overall 'judgment' is true only if ALL answers pass AND the summary has no major omissions or factual errors.\n\n"
-             "Return ONLY structured JSON per schema.")
+             "You evaluate QA factuality vs the ARTICLE (ground truth) and assess SUMMARY completeness indirectly.\n\n"
+             "ARTICLE:\n{article}\n\n"
+             "SUMMARY:\n{summary}\n\n"
+             "QA PAIRS:\n{qa_pairs}\n\n"
+             "For each pair:\n"
+             "- If question begins 'ACU.':\n"
+             "  * If article states the atomic fact and answer matches (allow trivial formatting), result=true.\n"
+             "  * If article states it but answer missing/inexact/fallback -> result=false, issue='missing atomic fact'.\n"
+             "  * If article does NOT contain it and answer claims a fact -> result=false, issue='unsupported'.\n"
+             "  * If article lacks it and answer correctly used fallback -> result=true.\n"
+             "- Non‑ACU: result=true only if accurate & specific; else false with brief issue.\n"
+             "- Keep issues concise.\n"
+             "judgment=true only if ALL results true AND no major obvious omissions (e.g., repeatedly central atomic facts absent from summary).\n\n"
+             "Return JSON per schema.")
         ])
         self.chain = ({
             "qa_pairs": RunnableLambda(lambda x: "\n".join(f"{p['question']}: {p['answer']}" for p in x["qa_pairs"])),
@@ -198,11 +216,7 @@ class Judge:
         } | self.prompt | self.llm)
 
     def run(self, article: str, summary: str, qa_pairs: List[Dict[str, str]]) -> JudgeEvaluationType:
-        return self.chain.invoke({
-            "article": article,
-            "summary": summary,
-            "qa_pairs": qa_pairs
-        })
+        return self.chain.invoke({"article": article, "summary": summary, "qa_pairs": qa_pairs})
 
 __all__ = [
     "QuestionsOutputType",
