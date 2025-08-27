@@ -43,6 +43,13 @@ class QuestionEvaluationType(BaseModel):
 class JudgeEvaluationType(BaseModel):
     evaluations: List[QuestionEvaluationType]
     judgment: bool
+    sections_to_highlight: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of concrete article sections/topics to focus on next iteration;"
+            " should be concise headings or topics, not QA issue texts."
+        ),
+    )
 
 class QAAgentEvaluationsOutputType(BaseModel):
     evaluations: List[QuestionEvaluationType]
@@ -189,7 +196,10 @@ class Judge:
              "QA pairs (from summary):\n{qa_pairs}\n\n"
              "Evaluate each question-answer ONLY using the article. For each pair: set result=true if the answer is accurate, complete, and specific; else result=false with a concise explanation in 'issue'.\n"
              "Overall 'judgment' is true only if ALL answers pass AND the summary has no major omissions or factual errors.\n\n"
-             "Return ONLY structured JSON per schema.")
+             "Then, propose 3-7 concise 'sections_to_highlight' for the next summarization iteration.\n"
+             "These must be concrete section headings or topics derived from the ARTICLE (anchor to real headings if present),\n"
+             "not restatements of question issues. Keep each item short (max ~10 words).\n\n"
+             "Return ONLY structured JSON with keys: evaluations, judgment, sections_to_highlight.")
         ])
         self.chain = ({
             "qa_pairs": RunnableLambda(lambda x: "\n".join(f"{p['question']}: {p['answer']}" for p in x["qa_pairs"])),

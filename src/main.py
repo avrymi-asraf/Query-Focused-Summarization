@@ -112,6 +112,8 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             # counts to be filled post-judge
             "correct_count_all": 0,
             "correct_count_acu": 0,
+            "sections_to_highlight": [],
+            "sections_to_highlight_size": 0,
         }
         # 2. Summarizer
         current_summary = summarizer.run(query=query, article=article, sections=sections_to_highlight)
@@ -130,6 +132,9 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
         # 4. Judge
         judge_eval: JudgeEvaluationType = judge_agent.run(article=article, summary=current_summary, qa_pairs=qa_pairs)
         iteration_data["judge"] = judge_eval.model_dump()
+        # capture judge-proposed sections for transparency in this iteration
+        iteration_data["sections_to_highlight"] = list(getattr(judge_eval, "sections_to_highlight", []))
+        iteration_data["sections_to_highlight_size"] = len(iteration_data["sections_to_highlight"]) if iteration_data["sections_to_highlight"] is not None else 0
 
         # 5. Compute ACU metrics from judge evaluations
         total_correct = sum(1 for ev in judge_eval.evaluations if ev.result)
@@ -149,8 +154,8 @@ def run_summarization_workflow(query: str, article: str, max_iterations: int = 4
             workflow_result["status"] = "completed"
             return workflow_result
         else:
-            # Extract guidance topics from failed questions explanations
-            sections_to_highlight = [qe.issue or qe.qa.question for qe in judge_eval.evaluations if not qe.result]
+            # Use judge-proposed sections directly
+            sections_to_highlight = list(getattr(judge_eval, "sections_to_highlight", []))
 
     # Max iterations reached
     workflow_result["final_summary"] = current_summary
