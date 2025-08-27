@@ -17,54 +17,56 @@ def process_pdf_to_markdown(file_path: str) -> str:
     Convert PDF file to markdown using LangChain loaders.
     Uses PyPDFLoader as primary, with UnstructuredPDFLoader as fallback.
     """
-    try:
-        # Primary loader: PyPDFLoader
-        loader = PyPDFLoader(file_path)
-        documents = loader.load()
+    pass
+    # try:
+    #     # Primary loader: PyPDFLoader
+    #     loader = PyPDFLoader(file_path)
+    #     documents = loader.load()
         
-        # Convert documents to markdown format
-        markdown_content = ""
-        for i, doc in enumerate(documents):
-            page_num = i + 1
-            content = doc.page_content.strip()
-            if content:
-                markdown_content += f"# Page {page_num}\n\n{content}\n\n"
+    #     # Convert documents to markdown format
+    #     markdown_content = ""
+    #     for i, doc in enumerate(documents):
+    #         page_num = i + 1
+    #         content = doc.page_content.strip()
+    #         if content:
+    #             markdown_content += f"# Page {page_num}\n\n{content}\n\n"
         
-        return markdown_content.strip()
+    #     return markdown_content.strip()
         
-    except Exception as e:
-        print(f"PyPDFLoader failed: {e}. Trying UnstructuredPDFLoader...")
+    # except Exception as e:
+    #     print(f"PyPDFLoader failed: {e}. Trying UnstructuredPDFLoader...")
         
-        try:
-            # Fallback loader: UnstructuredPDFLoader
-            loader = UnstructuredPDFLoader(file_path)
-            documents = loader.load()
+    #     try:
+    #         # Fallback loader: UnstructuredPDFLoader
+    #         loader = UnstructuredPDFLoader(file_path)
+    #         documents = loader.load()
             
-            # Convert documents to markdown format
-            markdown_content = ""
-            for i, doc in enumerate(documents):
-                content = doc.page_content.strip()
-                if content:
-                    # For unstructured loader, add section headers
-                    markdown_content += f"# Section {i + 1}\n\n{content}\n\n"
-            markdown_content = markdown_content.strip()
-            print(markdown_content)
-            return markdown_content
+    #         # Convert documents to markdown format
+    #         markdown_content = ""
+    #         for i, doc in enumerate(documents):
+    #             content = doc.page_content.strip()
+    #             if content:
+    #                 # For unstructured loader, add section headers
+    #                 markdown_content += f"# Section {i + 1}\n\n{content}\n\n"
+    #         markdown_content = markdown_content.strip()
+    #         print(markdown_content)
+    #         return markdown_content
             
-        except Exception as fallback_error:
-            raise Exception(f"Both PDF loaders failed. PyPDFLoader: {e}, UnstructuredPDFLoader: {fallback_error}")
+    #     except Exception as fallback_error:
+    #         raise Exception(f"Both PDF loaders failed. PyPDFLoader: {e}, UnstructuredPDFLoader: {fallback_error}")
 
 def load_file_content(file_path: str) -> str:
     """
     Load file content. If PDF, convert to markdown first.
     """
-    if file_path.lower().endswith('.pdf'):
-        print(f"Processing PDF file: {file_path}")
-        return process_pdf_to_markdown(file_path)
-    else:
-        # Read text files directly
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return f.read()
+    pass
+        # if file_path.lower().endswith('.pdf'):
+        #     print(f"Processing PDF file: {file_path}")
+        #     pass
+        # else:
+        #     # Read text files directly
+        #     with open(file_path, 'r', encoding='utf-8') as f:
+        #         return f.read()
 
 def run_summarization_workflow(query: str, article: str, max_iterations: int = 4, requests_per_second: float | None = None):
     """Run the iterative query-focused summarization workflow.

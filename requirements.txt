@@ -2,6 +2,5 @@ python-dotenv
 langchain-core
 langchain-google-genai
 langchain-community
-pypdf
-unstructured[pdf]
-pydantic
+markitdown[all]
+google-genai
