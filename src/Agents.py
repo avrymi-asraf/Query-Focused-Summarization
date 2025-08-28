@@ -72,9 +72,7 @@ class QuestionGenerator:
              "- Strongly tied to BOTH query and content.\n"
              "- No overlap or trivial rephrases.\n\n"
              "Return ONLY valid JSON for schema."
-             "REMEMBER: The questions should be directly tied to the query and content. and answerable from the article."
-             "Article:\n{article}\n\n"
-             "User Query:\n{query}\n\n")
+            "REMEMBER: The questions should be directly tied to the query and content. and answerable from the article.")
         ])
         self.chain = self.prompt | self.llm
 
