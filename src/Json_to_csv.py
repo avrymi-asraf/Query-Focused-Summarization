@@ -191,3 +191,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+#
+# Use --input for the folder and --output for the single CSV.
+#
+# Basic (non‑recursive): python -m src.Json_to_csv --input results --output output\aggregated.csv
+#
+# Recursive through subfolders: python -m src.Json_to_csv --input results --output output\aggregated_recursive.csv --recursive
+#
+# Quiet (suppress warnings): python -m src.Json_to_csv --input results --output output\aggregated.csv --quiet
