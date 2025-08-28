@@ -198,10 +198,8 @@ def run_summarization_workflow(
         )
 
         iteration_data["judge"] = judge_eval.model_dump()
-        # Replace sections_to_highlight with Judge-updated ordered list
-        sections_to_highlight = list(getattr(judge_eval, "sections_to_highlight", []) or [])
         iteration_data["sections_to_highlight"] = list(sections_to_highlight)
-        iteration_data["sections_to_highlight_size"] = len(iteration_data["sections_to_highlight"]) if iteration_data["sections_to_highlight"] is not None else 0
+        iteration_data["sections_to_highlight_size"] = len(sections_to_highlight)
 
         total_correct = sum(1 for ev in judge_eval.evaluations if ev.result is True)
         acu_correct = sum(
@@ -215,6 +213,19 @@ def run_summarization_workflow(
         iteration_data["correct_count_acu"] = acu_correct
 
         workflow_result["iterations"].append(iteration_data)
+
+        # NEW stop condition: require judge true AND no QAAgent failures
+        if judge_eval.judgment and not qa_failures:
+            workflow_result["final_summary"] = current_summary
+            workflow_result["total_iterations"] = iteration + 1
+            workflow_result["status"] = "completed"
+            return workflow_result
+        else:
+            # Accumulate sections across iterations using a set for O(1) membership checks
+            new_sections = list(getattr(judge_eval, "sections_to_highlight", []))
+            for section in new_sections:
+                sections_to_highlight.add(section)
+            print(f"sections_to_highlight: {sections_to_highlight}, iteration: {iteration}")
 
     workflow_result["final_summary"] = current_summary
     workflow_result["total_iterations"] = max_iterations
