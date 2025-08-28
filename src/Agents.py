@@ -20,13 +20,6 @@ class QuestionsOutputType(BaseModel):
     questions: List[str] = Field(
         ..., description="Exactly 5 diagnostic questions relevant to the query and article."
     )
-    acu_questions: List[str] = Field(
-        default_factory=list,
-        description=(
-            "0-5 ACU questions. Each MUST start with 'ACU.' and ask for a single short fact, "
-            "number, or entity tied to the query, with an unambiguous answer."
-        ),
-    )
 
 class QAPairType(BaseModel):
     question: str = Field(..., description="Original question (verbatim)")
@@ -66,32 +59,25 @@ class QuestionGenerator:
                 check_every_n_seconds=0.1,
                 max_bucket_size=14,
             )
-            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", rate_limiter=limiter)
         else:
-            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
         self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
              "You are an expert question formulator.\n"
              "User Query:\n{query}\n\n"
              "Article:\n{article}\n\n"
-             "Produce JSON with keys 'questions' and 'acu_questions'.\n\n"
-             "QUESTIONS (exactly 5):\n"
+             "Produce JSON with keys 'questions' no more then 7 questions.\n\n"
+             "QUESTIONS:\n"
              "- Diverse (coverage, perspective, depth).\n"
              "- Directly answerable from the article.\n"
              "- Strongly tied to BOTH query and content.\n"
              "- No overlap or trivial rephrases.\n\n"
-             "ACU QUESTIONS (0–3 ONLY):\n"
-             "- Each MUST begin with 'ACU.'\n"
-             "- Only include if ALL criteria met:\n"
-             "  * Explicitly and unambiguously stated (verbatim fact present).\n"
-             "  * High salience (title/abstract/intro/conclusion OR repeated OR central to query relevance).\n"
-             "  * Single atomic datum (number, date, short name, specific entity).\n"
-             "  * Very easy extraction (no synthesis, no calculation, no combining).\n"
-             "- Exclude if inferred, synthesized, multi-part, low importance, or moderate uncertainty.\n"
-             "- Prefer facts that strengthen the user query's core intent.\n"
-             "- If fewer than 1 satisfy the bar, return an empty list.\n\n"
-             "Return ONLY valid JSON for schema.")
+             "Return ONLY valid JSON for schema."
+             "REMEMBER: The questions should be directly tied to the query and content. and answerable from the article."
+             "Article:\n{article}\n\n"
+             "User Query:\n{query}\n\n")
         ])
         self.chain = self.prompt | self.llm
 
