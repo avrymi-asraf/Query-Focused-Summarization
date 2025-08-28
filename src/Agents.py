@@ -23,8 +23,10 @@ class QuestionsOutputType(BaseModel):
     acu_questions: List[str] = Field(
         default_factory=list,
         description=(
-            "0-5 ACU questions. Each MUST start with 'ACU.' and ask for a single short fact, "
-            "number, or entity tied to the query, with an unambiguous answer."
+            "0-5 ACU questions ONLY when appropriate. Each MUST start with 'ACU.' and ask for "
+            "a single short fact (number, date, named entity, or atomic fact) that is strictly "
+            "relevant to the user's query and is obvious and unambiguous in the article. If no "
+            "such ACUs exist, this list MUST be empty."
         ),
     )
 
@@ -46,8 +48,9 @@ class JudgeEvaluationType(BaseModel):
     sections_to_highlight: List[str] = Field(
         default_factory=list,
         description=(
-            "List of concrete article sections/topics to focus on next iteration;"
-            " should be concise headings or topics, not QA issue texts."
+            "Concrete sections/topics WITH an actionable angle for the next iteration;"
+            " format each as 'Heading — focus' (or 'Topic — instruction'); concise;"
+            " do not paste QA issue texts."
         ),
     )
 
@@ -66,9 +69,9 @@ class QuestionGenerator:
                 check_every_n_seconds=0.1,
                 max_bucket_size=14,
             )
-            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", rate_limiter=limiter)
         else:
-            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
         self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             (
@@ -78,7 +81,7 @@ class QuestionGenerator:
                 "Article Content:\n{article}\n\n"
                 "Task: Produce BOTH of the following:\n"
                 "- Exactly 5 diverse diagnostic questions in 'questions' that evaluate understanding of the article in relation to the user query.\n"
-                "- 0 to 5 ACU questions in 'acu_questions'. ACU questions MUST begin with 'ACU.' and request a single short, unambiguous fact (number, date, named entity, or atomic fact) that directly connects to the query.\n\n"
+                "- 0 to 5 ACU questions in 'acu_questions' ONLY IF they meet all criteria below; otherwise return an empty list. ACU questions MUST begin with 'ACU.' and request a single short, unambiguous fact (number, date, named entity, or atomic fact) that directly connects to the query.\n\n"
                 "Guidelines for 'questions':\n"
                 "- Mix factual, analytical, and inferential perspectives\n"
                 "- Cover different important sections/aspects\n"
@@ -87,11 +90,12 @@ class QuestionGenerator:
                 "- Must stay tightly relevant to the query AND the article\n\n"
                 "Guidelines for 'acu_questions':\n"
                 "- Each MUST start with 'ACU.' (e.g., 'ACU. What year was X founded?')\n"
-                "- Keep answers unambiguous and short: a single number, date, or named entity\n"
-                "- Avoid multi-part questions\n"
-                "- Only include ACUs when the article clearly contains the atomic fact\n\n"
-                "REMMBER: Ask simple questions that are directly related to the query and that are answered in the article!.",
-                "Return ONLY valid JSON adhering to the schema with keys 'questions' and 'acu_questions'.",
+                "- STRICT FILTER: Include ACUs only when the fact is (a) strictly relevant to the user's query, (b) explicitly present in the article, and (c) obvious and unambiguous. If any doubt exists, include none.\n"
+                "- The answer must be a single short value (number, date, named entity, or atomic fact); avoid multi-part or compound questions.\n"
+                "- Do not infer or aggregate; the fact must be explicitly stated and directly tied to the query.\n"
+                "- If no appropriate ACUs exist, output an empty list for 'acu_questions'.\n\n"
+                "REMEMBER: Ask simple questions that are directly related to the query and that are answered in the article!."
+                "Return ONLY valid JSON adhering to the schema with keys 'questions' and 'acu_questions'."
             )
         ])
         self.chain = self.prompt | self.llm
@@ -197,9 +201,12 @@ class Judge:
              "QA pairs (from summary):\n{qa_pairs}\n\n"
              "Evaluate each question-answer ONLY using the article. For each pair: set result=true if the answer is accurate, complete, and specific; else result=false with a concise explanation in 'issue'.\n"
              "Overall 'judgment' is true only if ALL answers pass AND the summary has no major omissions or factual errors.\n\n"
-             "Then, propose 3-7 concise 'sections_to_highlight' for the next summarization iteration.\n"
-             "These must be concrete section headings or topics derived from the ARTICLE (anchor to real headings if present),\n"
-             "not restatements of question issues. Keep each item short (max ~10 words).\n\n"
+             "Then, propose 3-7 'sections_to_highlight' for the next summarization iteration.\n"
+             "Each item must be a concrete section/topic PLUS a short angle for what to extract, formatted as 'Heading — focus'.\n"
+             "Examples: 'Methodology — key assumptions and limitations'; 'Results — core metrics vs baseline'.\n"
+             "Anchor to exact article headings if present; otherwise create a short explicit topic label.\n"
+             "Cover gaps revealed by failed/partial QA WITHOUT copying issue text. Be specific, actionable, and non-redundant.\n"
+             "Keep each item brief (~5–12 words).\n\n"
              "Return ONLY structured JSON with keys: evaluations, judgment, sections_to_highlight.")
         ])
         self.chain = ({

@@ -92,7 +92,7 @@ def run_summarization_workflow(
     questions = questions_output.questions
     acu_questions = getattr(questions_output, "acu_questions", [])
     current_summary = ""
-    sections_to_highlight: list[str] = []
+    sections_to_highlight: set[str] = set()
 
     workflow_result = {
         "query": query,
@@ -122,7 +122,7 @@ def run_summarization_workflow(
 
         # Summarize
         current_summary = summarizer.run(
-            query=query, article=article, sections=sections_to_highlight
+            query=query, article=article, sections=list(sections_to_highlight)
         )
         iteration_data["summary"] = current_summary
 
@@ -181,9 +181,11 @@ def run_summarization_workflow(
             workflow_result["status"] = "completed"
             return workflow_result
         else:
-            sections_to_highlight = list(
-                getattr(judge_eval, "sections_to_highlight", [])
-            )
+            # Accumulate sections across iterations using a set for O(1) membership checks
+            new_sections = list(getattr(judge_eval, "sections_to_highlight", []))
+            for section in new_sections:
+                sections_to_highlight.add(section)
+            print(f"sections_to_highlight: {sections_to_highlight}, iteration: {iteration}")
 
     workflow_result["final_summary"] = current_summary
     workflow_result["total_iterations"] = max_iterations
