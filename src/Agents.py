@@ -1,196 +1,212 @@
-import os
-from typing import List, Tuple, Union, Dict, Any
+"""Agent & model definitions.
+
+Each agent now creates its own LLM instance internally using a simple
+`InMemoryRateLimiter` built from the value passed in via the constructor.
+No shared globals and no helper factory functions (kept intentionally simple).
+"""
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
+from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.rate_limiters import InMemoryRateLimiter
+from pydantic import BaseModel, Field
 
-# Define the LLM instance to be reused
 load_dotenv()
 
-rate_limiter = InMemoryRateLimiter(
-    requests_per_second=0.233,
-    check_every_n_seconds=0.1,  # Wake up every 100 ms to check whether allowed to make a request,
-    max_bucket_size=14,  # maximum burst size.
-)
+# Data Models ----------------------------------------------------------------
+class QuestionsOutputType(BaseModel):
+    questions: List[str] = Field(
+        ..., description="Exactly 5 diagnostic questions relevant to the query and article."
+    )
 
+class QAPairType(BaseModel):
+    question: str = Field(..., description="Original question (verbatim)")
+    answer: str = Field(..., description="Answer derived ONLY from the summary or fallback text if insufficient info")
 
-# Use the model with highest RPM/RPD for free tier
-_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=rate_limiter)
-_llm_summarizer = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", max_output_tokens=400, rate_limiter=rate_limiter)
+class QAPairsOutputType(BaseModel):
+    pairs: List[QAPairType]
 
-# Helper function to extract text/content from various response types
-def _extract_text(response: Union[str, Dict[str, Any]]) -> str:
-    if isinstance(response, dict):
-        # Prioritize 'content' for ChatMessage objects, then 'text'
-        return response.get("content", response.get("text", ""))
-    return str(response) # Ensure it's always a string
+class QuestionEvaluationType(BaseModel):
+    qa: QAPairType
+    result: bool
+    issue: Optional[str] = None
 
-# --- Custom Output Parsers ---
+class JudgeEvaluationType(BaseModel):
+    evaluations: List[QuestionEvaluationType]
+    judgment: bool
 
-class QuestionListParser(BaseOutputParser[List[str]]):
-    """Parses a newline-separated string of questions into a list of strings."""
-    def parse(self, text: str) -> List[str]:
-        return [q.strip() for q in text.split("\n") if q.strip()]
+class QAAgentEvaluationsOutputType(BaseModel):
+    evaluations: List[QuestionEvaluationType]
 
-class QAPairsParser(BaseOutputParser[List[Tuple[str, str]]]):
-    """Parses a newline-separated string of 'question: answer' pairs."""
-    def parse(self, text: str) -> List[Tuple[str, str]]:
-        pairs = []
-        for line in text.split("\n"):
-            if ":" in line:
-                q, a = line.split(":", 1)
-                pairs.append((q.strip("- ").strip(), a.strip()))
-        return pairs
+class QAAgent:  # Placeholder
+    pass
 
-class JudgeOutputParser(BaseOutputParser[Tuple[bool, List[str]]]):
-    """Parses the Judge's response into (needs_iteration, missing_topics_list)."""
-    def parse(self, text: str) -> Tuple[bool, List[str]]:
-        reply = text.strip().upper()
-        if reply == "OK":
-            return False, []
-        return True, [t.strip("- ") for t in text.split("\n") if t.strip()]
-
-# --- Agents using LCEL ---
-
+# Question Generator ---------------------------------------------------------
 class QuestionGenerator:
-    def __init__(self, llm=None):
-        self.llm = llm or _llm # Use the global _llm if not provided
+    """
+    Produces:
+      - diagnostic questions.
+    """
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", rate_limiter=limiter)
+        else:
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
+        self.llm = base_llm.with_structured_output(QuestionsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-             "Given the user query:\n"
-             "{query}\n"
-             "and the article:\n"
-             "{article}\n"
-             "Generate exactly 5 diagnostic questions that help assess understanding of the article in relation to the query.\n\n"
-             "Guidelines for questions:\n"
-             "- Include a mix of factual, analytical, and inferential questions\n"
-             "- Ensure questions cover different aspects/sections of the article\n"
-             "- Make questions specific and directly answerable from the article content\n"
-             "- Vary complexity from straightforward recall to deeper analysis\n"
-             "- All questions must be relevant to both the article content and user query\n\n"
-             "Format: Output ONLY the 5 questions, one per line, without numbering or any additional text."
-             )
+             "You are an expert question formulator.\n"
+             "User Query:\n{query}\n\n"
+             "Article:\n{article}\n\n"
+             "Produce JSON with keys 'questions' no more then 7 questions.\n\n"
+             "QUESTIONS:\n"
+             "- Diverse (coverage, perspective, depth).\n"
+             "- Directly answerable from the article.\n"
+             "- Strongly tied to BOTH query and content.\n"
+             "- No overlap or trivial rephrases.\n\n"
+             "Return ONLY valid JSON for schema."
+            "REMEMBER: The questions should be directly tied to the query and content. and answerable from the article.")
         ])
-        self.chain = self.prompt | self.llm | StrOutputParser() | QuestionListParser()
+        self.chain = self.prompt | self.llm
 
-    def run(self, query: str, article: str) -> List[str]:
+    def run(self, query: str, article: str) -> QuestionsOutputType:
         return self.chain.invoke({"query": query, "article": article})
 
-class Summarizer:
-    def __init__(self, llm=None):
-        self.llm = llm or _llm_summarizer
 
+# Summarizer -----------------------------------------------------------------
+class Summarizer:
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
              "You are an expert summarizer tasked with creating a summary of an article from a specific user's perspective.\n\n"
-             "User's Query/Perspective:\n"  # Add the query here
-             "{query}\n\n"
-             "Given the article:\n"
-             "{article}\n\n"
+             "User's Query/Perspective:\n{query}\n\n"
+             "Given the article:\n{article}\n\n"
              "In this iteration, specifically focus on these topics (if provided):\n{sections}\n\n"
              "Format your response as follows:\n"
-             "1. SUMMARY: A cohesive 200-250 word overview that directly addresses the user's query, pulling all relevant information from the article.\n"
-             "2. KEY HIGHLIGHTS: 3-5 concise statements highlighting the most important facts, data points, or claims relevant to the query.\n\n"
-             "Focus ONLY on information that is relevant to the user's query.\n"
-             "Provide ONLY the formatted summary and highlights without additional commentary.\n"
-             )
+             "1. SUMMARY: A cohesive 200-250 word overview that directly addresses the user's query.\n"
+             "2. KEY HIGHLIGHTS: 3-5 concise statements highlighting the most important facts relevant to the query.\n\n"
+             "Focus ONLY on information relevant to the user's query. Provide ONLY the formatted summary and highlights.")
         ])
-
-        # self.prompt = ChatPromptTemplate.from_messages([
-        #     ("human",
-        #      "You are an expert question formulator with skills in critical analysis and comprehension testing.\n\n"
-        #      "Given the article:\n"
-        #      "{article}\n"
-        #      "Key points to include (if provided, otherwise identify them yourself):\n{sections}\n\n"
-        #      "Format your response as follows:\n"
-        #      "1. SUMMARY: A cohesive 200-250 word overview capturing ALL main ideas, key points and conclusions\n"
-        #      "2. KEY HIGHLIGHTS: 3-5 concise statements (50-100 words total) highlighting the most important facts, data points, or claims, ensuring ALL critical information is covered\n\n"
-        #      "Focus on accuracy and factual information from article only.\n"
-        #      "For lengthy articles, prioritize the most significant content, and key points.\n"
-        #      "Provide ONLY the formatted summary and highlights without additional commentary.\n"
-        #     )
-        # ])
-        # sections will be passed as a newline-separated string or empty
         self.chain = self.prompt | self.llm | StrOutputParser()
 
-    # def run(self, article: str, sections: List[str]) -> str:
-    #     # LCEL automatically handles passing inputs as dict
-    #     return self.chain.invoke({"article": article, "sections": "\n".join(sections)})
-
     def run(self, query: str, article: str, sections: List[str]) -> str:
-        return self.chain.invoke({"query": query, "article": article, "sections": "\n".join(sections)})
+        return self.chain.invoke({
+            "query": query,
+            "article": article,
+            "sections": "\n".join(sections) if sections else "(none)"
+        })
 
-class QAAgent:
-    def __init__(self, llm=None):
-        self.llm = llm or _llm
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("human",
-             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
-             "# Evaluation Task\n\n"
-             "Based STRICTLY on this summary (do not use outside knowledge):\n"
-             "{summary}\n\n"
-             "Answer each question below. Follow these rules:\n"
-             "- If the summary contains a direct answer, provide it concisely\n"
-             "- If the summary has partial information, provide what's available\n"
-             "- If the summary has no relevant information, respond EXACTLY with 'Not enough information in summary'\n"
-             "- Do not speculate or infer beyond what's explicitly stated\n\n"
-             "Format each response as 'Question: Answer' pairs (one pair per line, with the colon separator).\n\n"
-             "Questions:\n{questions}"
+# QA Agent Runner ------------------------------------------------------------
+class QAAgentRunner:
+    """
+    Answers both regular and ACU questions ONLY from the summary.
+    ACU success depends on the fact being naturally embedded in the summary text.
+    """
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
             )
-        ])
-        self.chain = (
-            {"questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions"])),
-             "summary": RunnablePassthrough()} # Pass summary through
-            | self.prompt
-            | self.llm
-            | StrOutputParser()
-            | QAPairsParser()
-        )
-
-    def run(self, questions: List[str], summary: str) -> List[Tuple[str, str]]:
-        # Pass a dictionary for multiple inputs
-        return self.chain.invoke({"questions": questions, "summary": summary})
-
-
-class Judge:
-    def __init__(self, llm=None):
-        self.llm = llm or _llm
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            base_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+        self.llm = base_llm.with_structured_output(QAAgentEvaluationsOutputType)
         self.prompt = ChatPromptTemplate.from_messages([
             ("human",
-             "You are a critical evaluator with expertise in assessing information completeness and accuracy.\n\n"
-             "# Evaluation Task\n\n"
-             "Article:\n{article}\n\n"
-             "Summary:\n{summary}\n\n"
-             "QA pairs (from summary):\n{qa_pairs}\n\n"
-             "## Instructions\n"
-             "Evaluate on these specific criteria:\n"
-             "1. FACTUAL ACCURACY: Are all facts from the article correctly represented?\n"
-             "2. COMPLETENESS: Are any major topics, arguments, or key points missing?\n"
-             "3. SPECIFICITY: Are important numerical data, dates, names, or specific details included?\n"
-             "4. QA ACCURACY: Do the answers match what's in the original article?\n\n"
-             "If ALL criteria are satisfied, respond with EXACTLY 'OK'.\n"
-             "Otherwise, list each missing or incorrectly addressed topic on a new line with a hyphen, focusing on substance rather than style."
-             )
+             "You answer strictly from the SUMMARY text below.\n\n"
+             "SUMMARY:\n{summary}\n\n"
+             "For each question:\n"
+             "- Use ONLY information present in the summary.\n"
+             "- If question starts with 'ACU.' extract the precise minimal span (number/date/name). If absent verbatim or clearly equivalent, answer exactly: Not enough information in summary\n"
+             "- For non‑ACU: provide best exact answer; if missing, same fallback.\n"
+             "- result=true only if answer is fully supported & specific. Otherwise result=false and issue describes ('missing', 'partial', or 'Not enough information').\n"
+             "- Never invent.\n\n"
+             "Return JSON with key 'evaluations'.\n"
+             "Questions:\n{questions}")
         ])
         self.chain = (
-            {"qa_pairs": RunnableLambda(lambda x: "\n".join(f"{q}: {a}" for q, a in x["qa_pairs"])),
-             "article": RunnablePassthrough(),
-             "summary": RunnablePassthrough()}
+            {
+                "questions": RunnableLambda(lambda x: "\n".join(f"- {q}" for q in x["questions_list"])),
+                "summary": RunnablePassthrough(),
+            }
             | self.prompt
             | self.llm
-            | StrOutputParser()
-            | JudgeOutputParser()
         )
 
-    def run(self, article: str, summary: str, qa_pairs: List[Tuple[str, str]]) -> Tuple[bool, List[str]]:
-        # Pass a dictionary for multiple inputs
+    def run(self, questions_output: QuestionsOutputType, summary: str) -> QAAgentEvaluationsOutputType:
+        # combined = list(questions_output.questions) + list(questions_output.acu_questions)
+        return self.chain.invoke({"questions_list": questions_output.questions, "summary": summary})
+
+# Judge ----------------------------------------------------------------------
+class Judge:
+    """
+    Verifies QA against the full article. For ACU: checks that the atomic fact
+    exists in the article and (if present in article) also appears in the summary answer.
+    Guides iteration by flagging missing atomic facts -> feed into next 'sections'.
+    """
+    def __init__(self, requests_per_second: Optional[float]):
+        if requests_per_second is not None:
+            limiter = InMemoryRateLimiter(
+                requests_per_second=requests_per_second,
+                check_every_n_seconds=0.1,
+                max_bucket_size=14,
+            )
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", rate_limiter=limiter)
+        else:
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+        self.llm = llm.with_structured_output(JudgeEvaluationType)
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("human",
+             "You evaluate QA factuality vs the ARTICLE (ground truth) and assess SUMMARY completeness indirectly.\n\n"
+             "ARTICLE:\n{article}\n\n"
+             "SUMMARY:\n{summary}\n\n"
+             "QA PAIRS:\n{qa_pairs}\n\n"
+             "For each pair:\n"
+             "- result=true only if accurate & specific; else false with brief issue.\n"
+             "- Keep issues concise.\n"
+             "judgment=true only if ALL results true .\n\n"
+             "Return JSON per schema.")
+        ])
+        self.chain = ({
+            "qa_pairs": RunnableLambda(lambda x: "\n".join(f"{p['question']}: {p['answer']}" for p in x["qa_pairs"])),
+            "article": RunnablePassthrough(),
+            "summary": RunnablePassthrough(),
+        } | self.prompt | self.llm)
+
+    def run(self, article: str, summary: str, qa_pairs: List[Dict[str, str]]) -> JudgeEvaluationType:
         return self.chain.invoke({"article": article, "summary": summary, "qa_pairs": qa_pairs})
 
+__all__ = [
+    "QuestionsOutputType",
+    "QuestionGenerator",
+    "Summarizer",
+    "QAAgent",
+    "QAAgentRunner",
+    "QAAgentEvaluationsOutputType",
+    "QuestionEvaluationType",
+    "JudgeEvaluationType",
+    "Judge",
+    "QAPairType",
+    "QAPairsOutputType",
+]
 
-if __name__ == "__main__":
-    # Dummy data for testing
+if __name__ == "__main__":  # pragma: no cover
     pass

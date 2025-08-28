@@ -32,13 +32,3 @@ python src/main.py --file articals/hebrew-university.md --query "What are the ma
 ```bash
 python src/main.py --file articals/hebrew-university.md --query "What are the main research areas?" --max_iterations 3 --output_format json
 ```
-
-# Roed map
-- [x] main with arguments
-- [x] add logging system
-- [ ] tools for reading varient of files
-- [ ] readme and instructions for llms
-- [ ] tests for basic working
-- [ ] benchmark for performence
-- [ ] store the resulte for every brance (out of codebase)
-- [ ] add interactive mode (allow to ask more iteretoins, and add topics)
