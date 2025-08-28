@@ -199,27 +199,35 @@ class Judge:
              "Article (reference):\n{article}\n\n"
              "Summary (to evaluate):\n{summary}\n\n"
              "QA pairs (from summary):\n{qa_pairs}\n\n"
+             "Conversation context so far (may include prior sections and notes):\n{conversation_notes}\n\n"
+             "Current sections_to_highlight list (from prior iterations):\n{sections_context}\n\n"
              "Evaluate each question-answer ONLY using the article. For each pair: set result=true if the answer is accurate, complete, and specific; else result=false with a concise explanation in 'issue'.\n"
              "Overall 'judgment' is true only if ALL answers pass AND the summary has no major omissions or factual errors.\n\n"
-             "Then, propose 3-7 'sections_to_highlight' for the next summarization iteration.\n"
-             "Each item must be a concrete section/topic PLUS a short angle for what to extract, formatted as 'Heading — focus'.\n"
-             "Examples: 'Methodology — key assumptions and limitations'; 'Results — core metrics vs baseline'.\n"
-             "Anchor to exact article headings if present; otherwise create a short explicit topic label.\n"
-             "Cover gaps revealed by failed/partial QA WITHOUT copying issue text. Be specific, actionable, and non-redundant.\n"
-             "Keep each item brief (~5–12 words).\n\n"
+             "Then, UPDATE the 'sections_to_highlight' list for the next summarization iteration, using the current list and conversation context as input.\n"
+             "Rules for updating sections_to_highlight:\n"
+             "- Propose 3–7 items total.\n"
+             "- Format each as 'Heading — focus'.\n"
+             "- Prefer refining/reordering existing items over discarding them when still relevant.\n"
+             "- Add new, specific items to address gaps revealed by failed/partial QA.\n"
+             "- Remove items that appear sufficiently addressed or redundant.\n"
+             "- Be specific, actionable, non-redundant, and brief (~5–12 words).\n\n"
              "Return ONLY structured JSON with keys: evaluations, judgment, sections_to_highlight.")
         ])
         self.chain = ({
             "qa_pairs": RunnableLambda(lambda x: "\n".join(f"{p['question']}: {p['answer']}" for p in x["qa_pairs"])),
             "article": RunnablePassthrough(),
             "summary": RunnablePassthrough(),
+            "sections_context": RunnableLambda(lambda x: "\n".join(f"- {s}" for s in x["sections_context"]) if x.get("sections_context") else "(none)"),
+            "conversation_notes": RunnablePassthrough(),
         } | self.prompt | self.llm)
 
-    def run(self, article: str, summary: str, qa_pairs: List[Dict[str, str]]) -> JudgeEvaluationType:
+    def run(self, article: str, summary: str, qa_pairs: List[Dict[str, str]], sections_context: List[str], conversation_notes: Optional[str] = None) -> JudgeEvaluationType:
         return self.chain.invoke({
             "article": article,
             "summary": summary,
-            "qa_pairs": qa_pairs
+            "qa_pairs": qa_pairs,
+            "sections_context": sections_context,
+            "conversation_notes": conversation_notes or "(none)",
         })
 
 __all__ = [
