@@ -47,10 +47,7 @@ class QAAgent:  # Placeholder
 class QuestionGenerator:
     """
     Produces:
-      - 5 diagnostic questions.
-      - Up to 3 ACU questions (prefixed 'ACU.') that target ONLY easy, high‑salience,
-        explicitly stated atomic facts (numbers, dates, named entities) directly relevant
-        to the user query. Excludes anything requiring inference or aggregation.
+      - diagnostic questions.
     """
     def __init__(self, requests_per_second: Optional[float]):
         if requests_per_second is not None:
@@ -157,8 +154,8 @@ class QAAgentRunner:
         )
 
     def run(self, questions_output: QuestionsOutputType, summary: str) -> QAAgentEvaluationsOutputType:
-        combined = list(questions_output.questions) + list(questions_output.acu_questions)
-        return self.chain.invoke({"questions_list": combined, "summary": summary})
+        # combined = list(questions_output.questions) + list(questions_output.acu_questions)
+        return self.chain.invoke({"questions_list": questions_output.questions, "summary": summary})
 
 # Judge ----------------------------------------------------------------------
 class Judge:
@@ -185,14 +182,9 @@ class Judge:
              "SUMMARY:\n{summary}\n\n"
              "QA PAIRS:\n{qa_pairs}\n\n"
              "For each pair:\n"
-             "- If question begins 'ACU.':\n"
-             "  * If article states the atomic fact and answer matches (allow trivial formatting), result=true.\n"
-             "  * If article states it but answer missing/inexact/fallback -> result=false, issue='missing atomic fact'.\n"
-             "  * If article does NOT contain it and answer claims a fact -> result=false, issue='unsupported'.\n"
-             "  * If article lacks it and answer correctly used fallback -> result=true.\n"
-             "- Non‑ACU: result=true only if accurate & specific; else false with brief issue.\n"
+             "- result=true only if accurate & specific; else false with brief issue.\n"
              "- Keep issues concise.\n"
-             "judgment=true only if ALL results true AND no major obvious omissions (e.g., repeatedly central atomic facts absent from summary).\n\n"
+             "judgment=true only if ALL results true .\n\n"
              "Return JSON per schema.")
         ])
         self.chain = ({
