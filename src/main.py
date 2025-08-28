@@ -152,12 +152,8 @@ def run_summarization_workflow(
             article=article, summary=current_summary, qa_pairs=qa_pairs
         )
         iteration_data["judge"] = judge_eval.model_dump()
-        iteration_data["sections_to_highlight"] = list(
-            getattr(judge_eval, "sections_to_highlight", [])
-        )
-        iteration_data["sections_to_highlight_size"] = len(
-            iteration_data["sections_to_highlight"]
-        )
+        iteration_data["sections_to_highlight"] = list(sections_to_highlight)
+        iteration_data["sections_to_highlight_size"] = len(sections_to_highlight)
 
         total_correct = sum(1 for ev in judge_eval.evaluations if ev.result is True)
         acu_correct = sum(
@@ -173,8 +169,6 @@ def run_summarization_workflow(
         workflow_result["iterations"].append(iteration_data)
 
         # NEW stop condition: require judge true AND no QAAgent failures
-        print(f"judge_eval.judgment: {judge_eval.judgment}",f"type: {type(judge_eval.judgment)}")
-        print(f"qa_failures: {qa_failures}",f"type: {type(qa_failures)}")
         if judge_eval.judgment and not qa_failures:
             workflow_result["final_summary"] = current_summary
             workflow_result["total_iterations"] = iteration + 1
