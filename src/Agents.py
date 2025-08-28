@@ -90,6 +90,7 @@ class QuestionGenerator:
                 "- Keep answers unambiguous and short: a single number, date, or named entity\n"
                 "- Avoid multi-part questions\n"
                 "- Only include ACUs when the article clearly contains the atomic fact\n\n"
+                "REMMBER: Ask simple questions that are directly related to the query and that are answered in the article!.",
                 "Return ONLY valid JSON adhering to the schema with keys 'questions' and 'acu_questions'.",
             )
         ])
