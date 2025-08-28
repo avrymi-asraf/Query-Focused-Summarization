@@ -172,6 +172,7 @@ def run_summarization_workflow(
         workflow_result["iterations"].append(iteration_data)
 
         # NEW stop condition: require judge true AND no QAAgent failures
+        print(judge_eval.evaluations)
         if judge_eval.judgment and not qa_failures:
             workflow_result["final_summary"] = current_summary
             workflow_result["total_iterations"] = iteration + 1
