@@ -114,6 +114,7 @@ def run_summarization_workflow(
             "judge": None,
             "correct_count_all": 0,
             "correct_count_acu": 0,
+            "num_of_questions": len(questions),
             "sections_to_highlight": [],
             "sections_to_highlight_size": 0,
             "qa_failures_present": False,
@@ -172,6 +173,8 @@ def run_summarization_workflow(
         workflow_result["iterations"].append(iteration_data)
 
         # NEW stop condition: require judge true AND no QAAgent failures
+        print(f"judge_eval.judgment: {judge_eval.judgment}",f"type: {type(judge_eval.judgment)}")
+        print(f"qa_failures: {qa_failures}",f"type: {type(qa_failures)}")
         if judge_eval.judgment and not qa_failures:
             workflow_result["final_summary"] = current_summary
             workflow_result["total_iterations"] = iteration + 1
